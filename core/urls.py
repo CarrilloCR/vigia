@@ -3,7 +3,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     ClinicaViewSet, MedicoViewSet, PacienteViewSet,
     CitaViewSet, RegistroKPIViewSet, AlertaViewSet,
-    ConfiguracionAlertaViewSet
+    ConfiguracionAlertaViewSet, ejecutar_motor
 )
 
 router = DefaultRouter()
@@ -17,4 +17,5 @@ router.register(r'configuraciones', ConfiguracionAlertaViewSet)
 
 urlpatterns = [
     path('', include(router.urls)),
+    path('motor/ejecutar/', ejecutar_motor, name='ejecutar_motor'),
 ]

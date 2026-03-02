@@ -110,3 +110,16 @@ class ConfiguracionAlertaViewSet(viewsets.ModelViewSet):
         if clinica_id:
             queryset = queryset.filter(clinica_id=clinica_id)
         return queryset
+
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny
+from .motor import correr_motor
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def ejecutar_motor(request):
+    clinica_id = request.data.get('clinica_id')
+    if not clinica_id:
+        return Response({'error': 'clinica_id es requerido'}, status=status.HTTP_400_BAD_REQUEST)
+    correr_motor(clinica_id)
+    return Response({'status': 'motor ejecutado correctamente'})
