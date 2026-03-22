@@ -216,7 +216,7 @@ def correr_motor(clinica_id):
             mensaje = generar_mensaje(tipo_kpi, valor_actual, valor_esperado, desviacion, clinica.nombre)
             recomendacion = generar_recomendacion_ia(tipo_kpi, valor_actual, valor_esperado, desviacion, clinica.nombre, severidad)
 
-            Alerta.objects.create(
+            alerta = Alerta.objects.create(
                 clinica_id=clinica_id,
                 tipo_kpi=tipo_kpi,
                 valor_detectado=valor_actual,
@@ -227,3 +227,10 @@ def correr_motor(clinica_id):
                 recomendacion=recomendacion,
                 estado='activa'
             )
+
+            # Disparar tarea de notificaciones en background
+            try:
+                from .tasks import enviar_notificaciones_task
+                enviar_notificaciones_task.delay(alerta.id)
+            except Exception as e:
+                print(f"Error disparando notificaciones: {e}")
