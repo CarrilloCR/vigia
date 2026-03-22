@@ -1,4 +1,6 @@
 import statistics
+import anthropic
+import os
 from django.utils import timezone
 from datetime import timedelta
 from .models import Cita, RegistroKPI, Alerta, Clinica, Encuesta
@@ -150,6 +152,37 @@ def generar_mensaje(tipo_kpi, valor_actual, valor_esperado, desviacion, clinica_
     }
     return mensajes.get(tipo_kpi, f"El KPI {tipo_kpi} tiene una desviación de {desviacion}% respecto al promedio histórico.")
 
+def generar_recomendacion_ia(tipo_kpi, valor_actual, valor_esperado, desviacion, clinica_nombre, severidad):
+    try:
+        client = anthropic.Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
+
+        prompt = f"""Eres un sistema de alertas inteligentes para clínicas médicas llamado Vigía.
+
+Se detectó una anomalía en la clínica "{clinica_nombre}":
+- KPI afectado: {tipo_kpi}
+- Valor actual: {valor_actual}
+- Valor esperado (promedio histórico): {valor_esperado}
+- Desviación: {desviacion}%
+- Severidad: {severidad}
+
+En máximo 2 oraciones cortas y directas:
+1. Explica qué puede estar causando esta anomalía
+2. Da una recomendación concreta de qué acción tomar
+
+Responde en español, de forma profesional pero simple. Sin bullets ni formato especial."""
+
+        message = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=200,
+            messages=[
+                {"role": "user", "content": prompt}
+            ]
+        )
+        return message.content[0].text
+    except Exception as e:
+        print(f"Error con Claude API: {e}")
+        return "Revisar con el equipo administrativo para identificar la causa y tomar acción correctiva."
+
 def correr_motor(clinica_id):
     try:
         clinica = Clinica.objects.get(id=clinica_id)
@@ -181,6 +214,7 @@ def correr_motor(clinica_id):
         if es_anomalia:
             severidad = determinar_severidad(desviacion)
             mensaje = generar_mensaje(tipo_kpi, valor_actual, valor_esperado, desviacion, clinica.nombre)
+            recomendacion = generar_recomendacion_ia(tipo_kpi, valor_actual, valor_esperado, desviacion, clinica.nombre, severidad)
 
             Alerta.objects.create(
                 clinica_id=clinica_id,
@@ -190,6 +224,6 @@ def correr_motor(clinica_id):
                 desviacion=desviacion,
                 severidad=severidad,
                 mensaje=mensaje,
-                recomendacion='Revisar con el equipo administrativo.',
+                recomendacion=recomendacion,
                 estado='activa'
             )
