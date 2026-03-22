@@ -19,6 +19,7 @@ django-celery-beat==2.9.0
 django-cors-headers==4.9.0
 django-timezone-field==7.2.1
 djangorestframework==3.17.0
+djangorestframework_simplejwt==5.5.1
 docstring_parser==0.17.0
 h11==0.16.0
 httpcore==1.0.9
@@ -33,6 +34,7 @@ psycopg2-binary==2.9.11
 pycparser==3.0
 pydantic==2.12.5
 pydantic_core==2.41.5
+PyJWT==2.12.1
 python-crontab==3.3.0
 python-dateutil==2.9.0.post0
 python-dotenv==1.2.2
