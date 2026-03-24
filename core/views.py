@@ -240,3 +240,15 @@ def ejecutar_motor(request):
         return Response({'error': 'clinica_id es requerido'}, status=status.HTTP_400_BAD_REQUEST)
     correr_motor(clinica_id)
     return Response({'status': 'motor ejecutado correctamente'})
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def generar_datos(request):
+    clinica_id = request.data.get('clinica_id')
+    from .tasks import generar_datos_clinica_task, generar_datos_falsos_task
+    if clinica_id:
+        generar_datos_clinica_task.delay(int(clinica_id))
+        return Response({'status': f'Generando datos para clínica {clinica_id}'})
+    else:
+        generar_datos_falsos_task.delay()
+        return Response({'status': 'Generando datos para todas las clínicas'})
