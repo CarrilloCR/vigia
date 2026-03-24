@@ -152,9 +152,20 @@ def generar_mensaje(tipo_kpi, valor_actual, valor_esperado, desviacion, clinica_
     }
     return mensajes.get(tipo_kpi, f"El KPI {tipo_kpi} tiene una desviación de {desviacion}% respecto al promedio histórico.")
 
+
 def generar_recomendacion_ia(tipo_kpi, valor_actual, valor_esperado, desviacion, clinica_nombre, severidad):
     try:
-        client = anthropic.Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
+        from dotenv import load_dotenv
+        import os
+        from pathlib import Path
+        env_path = Path(__file__).resolve().parent.parent / '.env'
+        load_dotenv(env_path)
+
+        api_key = os.getenv('ANTHROPIC_API_KEY')
+        if not api_key:
+            return 'Revisar con el equipo administrativo para identificar la causa y tomar acción correctiva.'
+
+        client = anthropic.Anthropic(api_key=api_key)
 
         prompt = f"""Eres un sistema de alertas inteligentes para clínicas médicas llamado Vigía.
 
@@ -174,14 +185,12 @@ Responde en español, de forma profesional pero simple. Sin bullets ni formato e
         message = client.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=200,
-            messages=[
-                {"role": "user", "content": prompt}
-            ]
+            messages=[{"role": "user", "content": prompt}]
         )
         return message.content[0].text
     except Exception as e:
         print(f"Error con Claude API: {e}")
-        return "Revisar con el equipo administrativo para identificar la causa y tomar acción correctiva."
+        return 'Revisar con el equipo administrativo para identificar la causa y tomar acción correctiva.'
 
 def correr_motor(clinica_id):
     try:
