@@ -37,6 +37,28 @@ def generar_cita_aleatoria(clinica):
     return cita
 
 
+def generar_kpis_variados(clinica_id):
+    base = {
+        'tasa_cancelacion': (5, 25),
+        'tasa_noshow':      (2, 15),
+        'ingresos_dia':     (200, 800),
+        'ticket_promedio':  (30, 120),
+        'pacientes_nuevos': (10, 40),
+        'retencion_90':     (60, 95),
+        'nps':              (20, 80),
+        'citas_reagendadas':(2, 15),
+    }
+
+    for tipo, (minv, maxv) in base.items():
+        valor = round(random.uniform(minv, maxv), 2)
+        RegistroKPI.objects.create(
+            clinica_id=clinica_id,
+            tipo=tipo,
+            valor=valor,
+            periodo='dia'
+        )
+
+
 def generar_datos_clinica(clinica_id):
     try:
         clinica = Clinica.objects.get(id=clinica_id)
@@ -46,6 +68,8 @@ def generar_datos_clinica(clinica_id):
     num_citas = random.randint(3, 8)
     for _ in range(num_citas):
         generar_cita_aleatoria(clinica)
+
+    generar_kpis_variados(clinica_id)
 
     from .motor import correr_motor
     correr_motor(clinica_id)
