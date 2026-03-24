@@ -110,13 +110,19 @@ class RegistroKPIViewSet(viewsets.ModelViewSet):
         clinica_id = self.request.query_params.get('clinica')
         medico_id = self.request.query_params.get('medico')
         tipo = self.request.query_params.get('tipo')
+        horas = self.request.query_params.get('horas', '24')
+
         if clinica_id:
             queryset = queryset.filter(clinica_id=clinica_id)
         if medico_id:
             queryset = queryset.filter(medico_id=medico_id)
         if tipo:
             queryset = queryset.filter(tipo=tipo)
-        return queryset
+
+        desde = timezone.now() - timedelta(hours=int(horas))
+        queryset = queryset.filter(fecha_hora__gte=desde)
+
+        return queryset.order_by('fecha_hora')
 
 
 class AlertaViewSet(viewsets.ModelViewSet):
