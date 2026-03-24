@@ -1,0 +1,58 @@
+import random
+from django.utils import timezone
+from datetime import timedelta
+from .models import Clinica, Medico, Paciente, Cita, RegistroKPI
+
+
+def generar_cita_aleatoria(clinica):
+    medicos = Medico.objects.filter(clinica=clinica, activo=True)
+    pacientes = Paciente.objects.filter(clinica=clinica)
+
+    if not medicos.exists() or not pacientes.exists():
+        return None
+
+    medico = random.choice(list(medicos))
+    paciente = random.choice(list(pacientes))
+
+    estado = random.choices(
+        ['completada', 'cancelada', 'no_show', 'reagendada'],
+        weights=[65, 20, 10, 5]
+    )[0]
+
+    ingreso = round(random.uniform(20, 150), 2) if estado == 'completada' else 0
+
+    ahora = timezone.now()
+    offset = random.randint(-3, 0)
+    fecha = ahora + timedelta(hours=offset)
+
+    cita = Cita.objects.create(
+        clinica=clinica,
+        medico=medico,
+        paciente=paciente,
+        fecha_hora_agendada=fecha,
+        fecha_hora_real=fecha if estado == 'completada' else None,
+        estado=estado,
+        ingreso_generado=ingreso,
+    )
+    return cita
+
+
+def generar_datos_clinica(clinica_id):
+    try:
+        clinica = Clinica.objects.get(id=clinica_id)
+    except Clinica.DoesNotExist:
+        return
+
+    num_citas = random.randint(3, 8)
+    for _ in range(num_citas):
+        generar_cita_aleatoria(clinica)
+
+    from .motor import correr_motor
+    correr_motor(clinica_id)
+
+
+def generar_datos_todas_clinicas():
+    clinicas = Clinica.objects.filter(activa=True)
+    for clinica in clinicas:
+        generar_datos_clinica(clinica.id)
+    return f"Datos generados para {clinicas.count()} clínicas"

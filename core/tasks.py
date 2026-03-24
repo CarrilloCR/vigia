@@ -134,3 +134,15 @@ def ejecutar_motor_todas_clinicas():
     for clinica in clinicas:
         ejecutar_motor_task.delay(clinica.id)
     return f"Motor ejecutado para {clinicas.count()} clínicas"
+
+@shared_task
+def generar_datos_falsos_task():
+    from .generador import generar_datos_todas_clinicas
+    resultado = generar_datos_todas_clinicas()
+    return resultado
+
+@shared_task
+def generar_datos_clinica_task(clinica_id):
+    from .generador import generar_datos_clinica
+    generar_datos_clinica(clinica_id)
+    return f"Datos generados para clínica {clinica_id}"
