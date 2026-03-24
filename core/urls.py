@@ -7,7 +7,7 @@ from .views import (
     EncuestaViewSet, RegistroKPIViewSet, AlertaViewSet,
     NotificacionViewSet, FeedbackAlertaViewSet,
     ConfiguracionAlertaViewSet, IntegracionExternaViewSet,
-    SyncLogViewSet, PlanFacturacionViewSet, ejecutar_motor
+    SyncLogViewSet, PlanFacturacionViewSet, ejecutar_motor, generar_datos
 )
 from .auth import register, login, logout, me, cambiar_password
 
@@ -31,6 +31,7 @@ router.register(r'planes', PlanFacturacionViewSet)
 urlpatterns = [
     path('', include(router.urls)),
     path('motor/ejecutar/', ejecutar_motor, name='ejecutar_motor'),
+    path('generador/ejecutar/', generar_datos, name='generar_datos'),
     # Auth
     path('auth/register/', register, name='register'),
     path('auth/login/', login, name='login'),
