@@ -19,6 +19,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django_celery_beat',
     # Terceros
     'rest_framework',
     'corsheaders',
@@ -115,3 +116,12 @@ PASSWORD_HASHERS = [
     'django.contrib.auth.hashers.Argon2PasswordHasher',
     'django.contrib.auth.hashers.PBKDF2PasswordHasher',
 ]
+
+from celery.schedules import crontab
+
+CELERY_BEAT_SCHEDULE = {
+    'generar-datos-y-analizar': {
+        'task': 'core.tasks.generar_datos_falsos_task',
+        'schedule': 300.0,  # cada 5 minutos
+    },
+}
