@@ -1,7 +1,7 @@
 import random
 from django.utils import timezone
 from datetime import timedelta
-from .models import Clinica, Medico, Paciente, Cita, RegistroKPI
+from .models import Clinica, Medico, Paciente, Cita, RegistroKPI, Alerta
 
 
 def generar_cita_aleatoria(clinica):
@@ -20,12 +20,10 @@ def generar_cita_aleatoria(clinica):
     )[0]
 
     ingreso = round(random.uniform(20, 150), 2) if estado == 'completada' else 0
-
     ahora = timezone.now()
-    offset = random.randint(-3, 0)
-    fecha = ahora + timedelta(hours=offset)
+    fecha = ahora + timedelta(hours=random.randint(-3, 0))
 
-    cita = Cita.objects.create(
+    return Cita.objects.create(
         clinica=clinica,
         medico=medico,
         paciente=paciente,
@@ -34,7 +32,6 @@ def generar_cita_aleatoria(clinica):
         estado=estado,
         ingreso_generado=ingreso,
     )
-    return cita
 
 
 def generar_kpis_variados(clinica_id):
@@ -46,9 +43,8 @@ def generar_kpis_variados(clinica_id):
         'pacientes_nuevos': (10, 40),
         'retencion_90':     (60, 95),
         'nps':              (20, 80),
-        'citas_reagendadas':(2, 15),
+        'citas_reagendadas': (2, 15),
     }
-
     for tipo, (minv, maxv) in base.items():
         valor = round(random.uniform(minv, maxv), 2)
         RegistroKPI.objects.create(
@@ -59,20 +55,73 @@ def generar_kpis_variados(clinica_id):
         )
 
 
+def detectar_anomalias_sin_claude(clinica_id):
+    import statistics
+    from datetime import timedelta
+
+    kpis = ['tasa_cancelacion', 'tasa_noshow', 'ingresos_dia', 'ticket_promedio',
+            'pacientes_nuevos', 'retencion_90', 'nps', 'citas_reagendadas']
+
+    desde = timezone.now() - timedelta(days=30)
+
+    for tipo in kpis:
+        registros = RegistroKPI.objects.filter(
+            clinica_id=clinica_id,
+            tipo=tipo,
+            fecha_hora__gte=desde
+        ).order_by('fecha_hora').values_list('valor', flat=True)
+
+        historico = list(registros)
+        if len(historico) < 6:
+            continue
+
+        valor_actual = historico[-1]
+        historico_previo = historico[:-1]
+        promedio = statistics.mean(historico_previo)
+
+        if promedio == 0:
+            continue
+
+        desviacion = abs((valor_actual - promedio) / promedio) * 100
+
+        if desviacion >= 20:
+            if desviacion >= 60:
+                severidad = 'critica'
+            elif desviacion >= 40:
+                severidad = 'alta'
+            else:
+                severidad = 'media'
+
+            try:
+                from .models import Clinica
+                clinica = Clinica.objects.get(id=clinica_id)
+
+                Alerta.objects.create(
+                    clinica_id=clinica_id,
+                    tipo_kpi=tipo,
+                    valor_detectado=round(valor_actual, 2),
+                    valor_esperado=round(promedio, 2),
+                    desviacion=round(desviacion, 2),
+                    severidad=severidad,
+                    mensaje=f"El KPI {tipo} de {clinica.nombre} es {round(valor_actual, 2)}, cuando lo normal es {round(promedio, 2)}. Desviación de {round(desviacion, 2)}%.",
+                    recomendacion='Ejecuta el análisis manual para obtener recomendaciones con IA.',
+                    estado='activa'
+                )
+            except Exception as e:
+                print(f"Error creando alerta: {e}")
+
+
 def generar_datos_clinica(clinica_id):
     try:
         clinica = Clinica.objects.get(id=clinica_id)
     except Clinica.DoesNotExist:
         return
 
-    num_citas = random.randint(3, 8)
-    for _ in range(num_citas):
+    for _ in range(random.randint(3, 8)):
         generar_cita_aleatoria(clinica)
 
     generar_kpis_variados(clinica_id)
-
-    from .motor import correr_motor
-    correr_motor(clinica_id)
+    detectar_anomalias_sin_claude(clinica_id)
 
 
 def generar_datos_todas_clinicas():

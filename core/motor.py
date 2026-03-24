@@ -210,13 +210,7 @@ def correr_motor(clinica_id):
     ]
 
     for tipo_kpi, valor_actual in kpis_a_evaluar:
-        RegistroKPI.objects.create(
-            clinica_id=clinica_id,
-            tipo=tipo_kpi,
-            valor=valor_actual,
-            periodo='dia'
-        )
-
+        # NO creamos RegistroKPI aqui, el generador ya lo hace con valores variados
         historico = obtener_historico(clinica_id, tipo_kpi)
         es_anomalia, valor_esperado, desviacion = detectar_anomalia(valor_actual, historico)
 
@@ -225,7 +219,7 @@ def correr_motor(clinica_id):
             mensaje = generar_mensaje(tipo_kpi, valor_actual, valor_esperado, desviacion, clinica.nombre)
             recomendacion = generar_recomendacion_ia(tipo_kpi, valor_actual, valor_esperado, desviacion, clinica.nombre, severidad)
 
-            alerta = Alerta.objects.create(
+            Alerta.objects.create(
                 clinica_id=clinica_id,
                 tipo_kpi=tipo_kpi,
                 valor_detectado=valor_actual,
