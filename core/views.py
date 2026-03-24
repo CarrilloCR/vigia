@@ -122,7 +122,6 @@ class RegistroKPIViewSet(viewsets.ModelViewSet):
 
         desde = timezone.now() - timedelta(hours=int(horas))
         queryset = queryset.filter(fecha_hora__gte=desde)
-
         return queryset.order_by('fecha_hora')
 
 
@@ -136,6 +135,8 @@ class AlertaViewSet(viewsets.ModelViewSet):
         estado = self.request.query_params.get('estado')
         severidad = self.request.query_params.get('severidad')
         medico_id = self.request.query_params.get('medico')
+        historial = self.request.query_params.get('historial')
+
         if clinica_id:
             queryset = queryset.filter(clinica_id=clinica_id)
         if estado:
@@ -144,8 +145,11 @@ class AlertaViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(severidad=severidad)
         if medico_id:
             queryset = queryset.filter(medico_id=medico_id)
-        return queryset.order_by('-creada_en')
+        if not historial:
+            # Por defecto solo activas, a menos que pidan historial
+            pass
 
+        return queryset.order_by('-creada_en')
 
     @action(detail=True, methods=['post'])
     def marcar_revisada(self, request, pk=None):
@@ -163,6 +167,26 @@ class AlertaViewSet(viewsets.ModelViewSet):
         alerta.save()
         return Response({'status': 'alerta marcada como resuelta'})
 
+    @action(detail=False, methods=['post'])
+    def resolver_todas(self, request):
+        clinica_id = request.data.get('clinica_id')
+        if not clinica_id:
+            return Response({'error': 'clinica_id requerido'}, status=status.HTTP_400_BAD_REQUEST)
+        count = Alerta.objects.filter(clinica_id=clinica_id, estado='activa').update(
+            estado='resuelta', revisada_en=timezone.now()
+        )
+        return Response({'status': f'{count} alertas resueltas'})
+
+    @action(detail=False, methods=['post'])
+    def revisar_todas(self, request):
+        clinica_id = request.data.get('clinica_id')
+        if not clinica_id:
+            return Response({'error': 'clinica_id requerido'}, status=status.HTTP_400_BAD_REQUEST)
+        count = Alerta.objects.filter(clinica_id=clinica_id, estado='activa').update(
+            estado='revisada', revisada_en=timezone.now()
+        )
+        return Response({'status': f'{count} alertas revisadas'})
+
 
 class NotificacionViewSet(viewsets.ModelViewSet):
     queryset = Notificacion.objects.all()
@@ -172,11 +196,14 @@ class NotificacionViewSet(viewsets.ModelViewSet):
         queryset = Notificacion.objects.all()
         alerta_id = self.request.query_params.get('alerta')
         usuario_id = self.request.query_params.get('usuario')
+        estado = self.request.query_params.get('estado')
         if alerta_id:
             queryset = queryset.filter(alerta_id=alerta_id)
         if usuario_id:
             queryset = queryset.filter(usuario_id=usuario_id)
-        return queryset
+        if estado:
+            queryset = queryset.filter(estado=estado)
+        return queryset.order_by('-enviada_en')
 
 
 class FeedbackAlertaViewSet(viewsets.ModelViewSet):
@@ -245,8 +272,9 @@ def ejecutar_motor(request):
     clinica_id = request.data.get('clinica_id')
     if not clinica_id:
         return Response({'error': 'clinica_id es requerido'}, status=status.HTTP_400_BAD_REQUEST)
-    correr_motor(clinica_id)
+    correr_motor(clinica_id, enviar_notif=True)
     return Response({'status': 'motor ejecutado correctamente'})
+
 
 @api_view(['POST'])
 @permission_classes([AllowAny])

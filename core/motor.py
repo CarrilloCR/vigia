@@ -152,11 +152,9 @@ def generar_mensaje(tipo_kpi, valor_actual, valor_esperado, desviacion, clinica_
     }
     return mensajes.get(tipo_kpi, f"El KPI {tipo_kpi} tiene una desviación de {desviacion}% respecto al promedio histórico.")
 
-
 def generar_recomendacion_ia(tipo_kpi, valor_actual, valor_esperado, desviacion, clinica_nombre, severidad):
     try:
         from dotenv import load_dotenv
-        import os
         from pathlib import Path
         env_path = Path(__file__).resolve().parent.parent / '.env'
         load_dotenv(env_path)
@@ -166,7 +164,6 @@ def generar_recomendacion_ia(tipo_kpi, valor_actual, valor_esperado, desviacion,
             return 'Revisar con el equipo administrativo para identificar la causa y tomar acción correctiva.'
 
         client = anthropic.Anthropic(api_key=api_key)
-
         prompt = f"""Eres un sistema de alertas inteligentes para clínicas médicas llamado Vigía.
 
 Se detectó una anomalía en la clínica "{clinica_nombre}":
@@ -192,7 +189,7 @@ Responde en español, de forma profesional pero simple. Sin bullets ni formato e
         print(f"Error con Claude API: {e}")
         return 'Revisar con el equipo administrativo para identificar la causa y tomar acción correctiva.'
 
-def correr_motor(clinica_id):
+def correr_motor(clinica_id, enviar_notif=False):
     try:
         clinica = Clinica.objects.get(id=clinica_id)
     except Clinica.DoesNotExist:
@@ -210,16 +207,19 @@ def correr_motor(clinica_id):
     ]
 
     for tipo_kpi, valor_actual in kpis_a_evaluar:
-        # NO creamos RegistroKPI aqui, el generador ya lo hace con valores variados
         historico = obtener_historico(clinica_id, tipo_kpi)
         es_anomalia, valor_esperado, desviacion = detectar_anomalia(valor_actual, historico)
 
         if es_anomalia:
             severidad = determinar_severidad(desviacion)
             mensaje = generar_mensaje(tipo_kpi, valor_actual, valor_esperado, desviacion, clinica.nombre)
-            recomendacion = generar_recomendacion_ia(tipo_kpi, valor_actual, valor_esperado, desviacion, clinica.nombre, severidad)
 
-            Alerta.objects.create(
+            if severidad in ['alta', 'critica']:
+                recomendacion = generar_recomendacion_ia(tipo_kpi, valor_actual, valor_esperado, desviacion, clinica.nombre, severidad)
+            else:
+                recomendacion = 'Monitorear la situación y revisar si el patrón continúa en las próximas horas.'
+
+            alerta = Alerta.objects.create(
                 clinica_id=clinica_id,
                 tipo_kpi=tipo_kpi,
                 valor_detectado=valor_actual,
@@ -231,9 +231,9 @@ def correr_motor(clinica_id):
                 estado='activa'
             )
 
-            # Disparar tarea de notificaciones en background
-            try:
-                from .tasks import enviar_notificaciones_task
-                enviar_notificaciones_task.delay(alerta.id)
-            except Exception as e:
-                print(f"Error disparando notificaciones: {e}")
+            if enviar_notif:
+                try:
+                    from .tasks import enviar_notificaciones_task
+                    enviar_notificaciones_task.delay(alerta.id)
+                except Exception as e:
+                    print(f"Error disparando notificaciones: {e}")
