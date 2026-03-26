@@ -135,7 +135,6 @@ class AlertaViewSet(viewsets.ModelViewSet):
         estado = self.request.query_params.get('estado')
         severidad = self.request.query_params.get('severidad')
         medico_id = self.request.query_params.get('medico')
-        historial = self.request.query_params.get('historial')
 
         if clinica_id:
             queryset = queryset.filter(clinica_id=clinica_id)
@@ -145,9 +144,6 @@ class AlertaViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(severidad=severidad)
         if medico_id:
             queryset = queryset.filter(medico_id=medico_id)
-        if not historial:
-            # Por defecto solo activas, a menos que pidan historial
-            pass
 
         return queryset.order_by('-creada_en')
 
@@ -173,9 +169,9 @@ class AlertaViewSet(viewsets.ModelViewSet):
         if not clinica_id:
             return Response({'error': 'clinica_id requerido'}, status=status.HTTP_400_BAD_REQUEST)
         count = Alerta.objects.filter(clinica_id=clinica_id, estado='activa').update(
-            estado='resuelta', revisada_en=timezone.now()
+            estado='revisada', revisada_en=timezone.now()
         )
-        return Response({'status': f'{count} alertas resueltas'})
+        return Response({'status': f'{count} alertas marcadas como revisadas'})
 
     @action(detail=False, methods=['post'])
     def revisar_todas(self, request):
@@ -213,8 +209,11 @@ class FeedbackAlertaViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = FeedbackAlerta.objects.all()
         alerta_id = self.request.query_params.get('alerta')
+        fue_util = self.request.query_params.get('fue_util')
         if alerta_id:
             queryset = queryset.filter(alerta_id=alerta_id)
+        if fue_util is not None:
+            queryset = queryset.filter(fue_util=fue_util == 'true')
         return queryset
 
 
