@@ -195,19 +195,27 @@ def correr_motor(clinica_id, enviar_notif=False):
     except Clinica.DoesNotExist:
         return
 
-    kpis_a_evaluar = [
-        ('tasa_cancelacion', calcular_tasa_cancelacion(clinica_id)),
-        ('tasa_noshow', calcular_tasa_noshow(clinica_id)),
-        ('ingresos_dia', calcular_ingresos_dia(clinica_id)),
-        ('ticket_promedio', calcular_ticket_promedio(clinica_id)),
-        ('pacientes_nuevos', calcular_pacientes_nuevos(clinica_id)),
-        ('retencion_90', calcular_retencion_90(clinica_id)),
-        ('nps', calcular_nps(clinica_id)),
-        ('citas_reagendadas', calcular_citas_reagendadas(clinica_id)),
-    ]
+    kpis = ['tasa_cancelacion', 'tasa_noshow', 'ingresos_dia', 'ticket_promedio',
+            'pacientes_nuevos', 'retencion_90', 'nps', 'citas_reagendadas']
 
-    for tipo_kpi, valor_actual in kpis_a_evaluar:
-        historico = obtener_historico(clinica_id, tipo_kpi)
+    for tipo_kpi in kpis:
+        # Usar el ultimo registro generado como valor actual
+        ultimo = RegistroKPI.objects.filter(
+            clinica_id=clinica_id,
+            tipo=tipo_kpi
+        ).order_by('-fecha_hora').first()
+
+        if not ultimo:
+            continue
+
+        valor_actual = ultimo.valor
+
+        # Historico: todos menos el ultimo
+        historico = list(RegistroKPI.objects.filter(
+            clinica_id=clinica_id,
+            tipo=tipo_kpi,
+        ).order_by('-fecha_hora')[1:30].values_list('valor', flat=True))
+
         es_anomalia, valor_esperado, desviacion = detectar_anomalia(valor_actual, historico)
 
         if es_anomalia:
