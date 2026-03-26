@@ -35,6 +35,9 @@ def generar_cita_aleatoria(clinica):
 
 
 def generar_kpis_variados(clinica_id):
+    import statistics
+    from .models import RegistroKPI
+
     base = {
         'tasa_cancelacion':  (5, 25),
         'tasa_noshow':       (2, 15),
@@ -45,8 +48,40 @@ def generar_kpis_variados(clinica_id):
         'nps':               (20, 80),
         'citas_reagendadas': (2, 15),
     }
+
     for tipo, (minv, maxv) in base.items():
-        valor = round(random.uniform(minv, maxv), 2)
+        # Obtener promedio histórico reciente
+        recientes = RegistroKPI.objects.filter(
+            clinica_id=clinica_id,
+            tipo=tipo,
+        ).order_by('-fecha_hora').values_list('valor', flat=True)[:20]
+
+        if len(recientes) >= 5:
+            promedio = statistics.mean(recientes)
+            # 70% del tiempo variación pequeña (baja/media)
+            # 20% del tiempo variación media (alta)
+            # 10% del tiempo variación grande (crítica)
+            rand = random.random()
+            if rand < 0.70:
+                # Variación ±15% del promedio — no anomalía o baja
+                factor = random.uniform(0.85, 1.15)
+            elif rand < 0.90:
+                # Variación ±35% — media/alta
+                factor = random.choice([
+                    random.uniform(0.65, 0.79),
+                    random.uniform(1.21, 1.35),
+                ])
+            else:
+                # Variación >50% — crítica
+                factor = random.choice([
+                    random.uniform(0.40, 0.60),
+                    random.uniform(1.50, 1.80),
+                ])
+            valor = round(max(minv, min(maxv * 1.5, promedio * factor)), 2)
+        else:
+            # Sin historial suficiente, valor normal
+            valor = round(random.uniform(minv, maxv), 2)
+
         RegistroKPI.objects.create(
             clinica_id=clinica_id,
             tipo=tipo,
