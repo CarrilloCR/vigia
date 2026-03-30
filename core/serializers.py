@@ -34,6 +34,11 @@ class CitaSerializer(serializers.ModelSerializer):
     class Meta:
         model = Cita
         fields = '__all__'
+    def get_paciente_nombre(self, obj):
+        return f"{obj.paciente.nombre} {obj.paciente.apellido}" if obj.paciente else ''
+
+    def get_medico_nombre(self, obj):
+        return f"Dr. {obj.medico.nombre} {obj.medico.apellido}" if obj.medico else ''
 
 class EncuestaSerializer(serializers.ModelSerializer):
     class Meta:

@@ -53,6 +53,10 @@ class Medico(models.Model):
     apellido = models.CharField(max_length=100)
     especialidad = models.CharField(max_length=100)
     email = models.EmailField(blank=True)
+    telefono = models.CharField(max_length=20, blank=True)
+    descripcion = models.TextField(blank=True)
+    foto_url = models.TextField(blank=True)
+    fecha_ingreso = models.DateField(null=True, blank=True)
     activo = models.BooleanField(default=True)
 
     def __str__(self):
@@ -180,7 +184,7 @@ class Notificacion(models.Model):
         ('fallida', 'Fallida'),
     ]
     alerta = models.ForeignKey(Alerta, on_delete=models.CASCADE, related_name='notificaciones')
-    usuario = models.ForeignKey(Usuario, on_delete=models.CASCADE, related_name='notificaciones')
+    usuario = models.ForeignKey(Usuario, on_delete=models.SET_NULL, null=True, blank=True, related_name='notificaciones')
     canal = models.CharField(max_length=20, choices=CANAL_CHOICES)
     destinatario = models.CharField(max_length=200)
     estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='pendiente')
@@ -274,6 +278,7 @@ class PlanFacturacion(models.Model):
 
     def __str__(self):
         return f"{self.clinica} - {self.plan} - {self.estado}"
+
 
 class EmailNotificacion(models.Model):
     clinica = models.ForeignKey(Clinica, on_delete=models.CASCADE, related_name='emails_notificacion')
