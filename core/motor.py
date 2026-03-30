@@ -195,19 +195,27 @@ def correr_motor(clinica_id, enviar_notif=False):
     except Clinica.DoesNotExist:
         return
 
-    kpis_a_evaluar = [
-        ('tasa_cancelacion', calcular_tasa_cancelacion(clinica_id)),
-        ('tasa_noshow', calcular_tasa_noshow(clinica_id)),
-        ('ingresos_dia', calcular_ingresos_dia(clinica_id)),
-        ('ticket_promedio', calcular_ticket_promedio(clinica_id)),
-        ('pacientes_nuevos', calcular_pacientes_nuevos(clinica_id)),
-        ('retencion_90', calcular_retencion_90(clinica_id)),
-        ('nps', calcular_nps(clinica_id)),
-        ('citas_reagendadas', calcular_citas_reagendadas(clinica_id)),
-    ]
+    kpis = ['tasa_cancelacion', 'tasa_noshow', 'ingresos_dia', 'ticket_promedio',
+            'pacientes_nuevos', 'retencion_90', 'nps', 'citas_reagendadas']
 
-    for tipo_kpi, valor_actual in kpis_a_evaluar:
-        historico = obtener_historico(clinica_id, tipo_kpi)
+    alertas_creadas = []
+
+    for tipo_kpi in kpis:
+        ultimo = RegistroKPI.objects.filter(
+            clinica_id=clinica_id,
+            tipo=tipo_kpi
+        ).order_by('-fecha_hora').first()
+
+        if not ultimo:
+            continue
+
+        valor_actual = ultimo.valor
+
+        historico = list(RegistroKPI.objects.filter(
+            clinica_id=clinica_id,
+            tipo=tipo_kpi,
+        ).order_by('-fecha_hora')[1:30].values_list('valor', flat=True))
+
         es_anomalia, valor_esperado, desviacion = detectar_anomalia(valor_actual, historico)
 
         if es_anomalia:
@@ -230,10 +238,12 @@ def correr_motor(clinica_id, enviar_notif=False):
                 recomendacion=recomendacion,
                 estado='activa'
             )
+            alertas_creadas.append(alerta.id)
 
-            if enviar_notif:
-                try:
-                    from .tasks import enviar_notificaciones_task
-                    enviar_notificaciones_task.delay(alerta.id)
-                except Exception as e:
-                    print(f"Error disparando notificaciones: {e}")
+    # Enviar UN solo email con todas las alertas del ciclo
+    if enviar_notif and alertas_creadas:
+        try:
+            from .tasks import enviar_notificaciones_agrupadas_task
+            enviar_notificaciones_agrupadas_task.delay(clinica_id, alertas_creadas)
+        except Exception as e:
+            print(f"Error disparando notificaciones: {e}")

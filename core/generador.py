@@ -1,4 +1,5 @@
 import random
+import statistics
 from django.utils import timezone
 from datetime import timedelta
 from .models import Clinica, Medico, Paciente, Cita, RegistroKPI
@@ -45,8 +46,49 @@ def generar_kpis_variados(clinica_id):
         'nps':               (20, 80),
         'citas_reagendadas': (2, 15),
     }
+
     for tipo, (minv, maxv) in base.items():
-        valor = round(random.uniform(minv, maxv), 2)
+        recientes = list(RegistroKPI.objects.filter(
+            clinica_id=clinica_id,
+            tipo=tipo,
+        ).order_by('-fecha_hora').values_list('valor', flat=True)[:20])
+
+        if len(recientes) >= 5:
+            promedio = statistics.mean(recientes)
+            rand = random.random()
+
+            if rand < 0.50:
+                # Normal — sin anomalía
+                valor = round(promedio * random.uniform(0.85, 1.15), 2)
+            elif rand < 0.65:
+                # Baja — 20-40% desviación
+                if random.random() < 0.5:
+                    valor = round(promedio * random.uniform(0.60, 0.80), 2)
+                else:
+                    valor = round(promedio * random.uniform(1.20, 1.40), 2)
+            elif rand < 0.78:
+                # Media — 40-60% desviación
+                if random.random() < 0.5:
+                    valor = round(promedio * random.uniform(0.40, 0.60), 2)
+                else:
+                    valor = round(promedio * random.uniform(1.40, 1.60), 2)
+            elif rand < 0.89:
+                # Alta — 60-80% desviación
+                if random.random() < 0.5:
+                    valor = round(promedio * random.uniform(0.20, 0.40), 2)
+                else:
+                    valor = round(promedio * random.uniform(1.60, 1.80), 2)
+            else:
+                # Crítica — >80% desviación
+                if random.random() < 0.5:
+                    valor = round(promedio * random.uniform(0.05, 0.15), 2)
+                else:
+                    valor = round(promedio * random.uniform(1.85, 2.50), 2)
+
+            valor = max(0.1, valor)
+        else:
+            valor = round(random.uniform(minv, maxv), 2)
+
         RegistroKPI.objects.create(
             clinica_id=clinica_id,
             tipo=tipo,
