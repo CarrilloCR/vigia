@@ -7,7 +7,7 @@ from datetime import timedelta
 from .models import (
     Clinica, Sede, Usuario, Medico, Paciente, Cita, Encuesta,
     RegistroKPI, Alerta, Notificacion, FeedbackAlerta,
-    ConfiguracionAlerta, IntegracionExterna, SyncLog, PlanFacturacion
+    ConfiguracionAlerta, IntegracionExterna, SyncLog, PlanFacturacion, EmailNotificacion
 )
 from .serializers import (
     ClinicaSerializer, SedeSerializer, UsuarioSerializer,
@@ -15,7 +15,7 @@ from .serializers import (
     EncuestaSerializer, RegistroKPISerializer, AlertaSerializer,
     NotificacionSerializer, FeedbackAlertaSerializer,
     ConfiguracionAlertaSerializer, IntegracionExternaSerializer,
-    SyncLogSerializer, PlanFacturacionSerializer
+    SyncLogSerializer, PlanFacturacionSerializer, EmailNotificacionSerializer
 )
 from .motor import correr_motor
 
@@ -263,6 +263,17 @@ class PlanFacturacionViewSet(viewsets.ModelViewSet):
         if clinica_id:
             queryset = queryset.filter(clinica_id=clinica_id)
         return queryset
+
+class EmailNotificacionViewSet(viewsets.ModelViewSet):
+    queryset = EmailNotificacion.objects.all()
+    serializer_class = EmailNotificacionSerializer
+
+    def get_queryset(self):
+        queryset = EmailNotificacion.objects.all()
+        clinica_id = self.request.query_params.get('clinica')
+        if clinica_id:
+            queryset = queryset.filter(clinica_id=clinica_id)
+        return queryset.filter(activo=True)
 
 
 @api_view(['POST'])

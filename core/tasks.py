@@ -21,28 +21,27 @@ def enviar_notificaciones_agrupadas_task(clinica_id, alerta_ids):
         if not alertas.exists():
             return "Sin alertas para notificar"
 
-        # Obtener emails destino — usuarios de la clínica + emails configurados
         emails_destino = set()
 
+        # Emails de usuarios de la clínica
         usuarios = Usuario.objects.filter(clinica=clinica)
         for u in usuarios:
             if u.email:
                 emails_destino.add(u.email)
 
-        # Emails adicionales configurados
+        # Emails adicionales del modelo EmailNotificacion
         try:
-            from .models import ConfiguracionAlerta
-            configs = ConfiguracionAlerta.objects.filter(clinica=clinica, activa=True)
-            for config in configs:
-                if hasattr(config, 'email_destino') and config.email_destino:
-                    emails_destino.add(config.email_destino)
+            from .models import EmailNotificacion
+            emails_extra = EmailNotificacion.objects.filter(clinica=clinica, activo=True)
+            for e in emails_extra:
+                emails_destino.add(e.email)
         except Exception:
             pass
 
         if not emails_destino:
             return "Sin emails destino configurados"
 
-        # Crear una sola notificación por email
+        # Una sola notificación por email
         for email in emails_destino:
             notif = Notificacion.objects.create(
                 alerta=alertas.first(),
@@ -64,6 +63,10 @@ def enviar_email_agrupado_task(notificacion_id, alerta_ids, destinatario):
     try:
         from sendgrid import SendGridAPIClient
         from sendgrid.helpers.mail import Mail
+        from dotenv import load_dotenv
+        from pathlib import Path
+        env_path = Path(__file__).resolve().parent.parent / '.env'
+        load_dotenv(env_path)
 
         alertas = Alerta.objects.filter(id__in=alerta_ids).order_by('-severidad')
 
@@ -118,7 +121,6 @@ def enviar_email_agrupado_task(notificacion_id, alerta_ids, destinatario):
                 <h1 style="color: white; margin: 0; font-size: 26px;">Vigía</h1>
                 <p style="color: #F5F3FA; margin: 4px 0 0 0; font-size: 13px;">Sistema de Alertas Inteligentes para Clínicas</p>
             </div>
-
             <div style="background: white; padding: 24px; border: 1px solid #E0D9F5; border-top: none;">
                 <div style="background: #F5F3FA; border-radius: 10px; padding: 16px; margin-bottom: 24px; text-align: center;">
                     <p style="margin: 0; font-size: 13px; color: #8B89A0;">Resumen del análisis</p>
@@ -137,11 +139,9 @@ def enviar_email_agrupado_task(notificacion_id, alerta_ids, destinatario):
                         </div>
                     </div>
                 </div>
-
                 <h2 style="color: #2D2B3D; font-size: 16px; margin: 0 0 16px 0;">Detalle de alertas</h2>
                 {alertas_html}
             </div>
-
             <div style="background: #F5F3FA; padding: 14px 20px; border-radius: 0 0 12px 12px; text-align: center;">
                 <p style="margin: 0; font-size: 11px; color: #8B89A0;">
                     Vigía — {timezone.now().strftime('%d/%m/%Y %H:%M')} · Este email fue generado automáticamente

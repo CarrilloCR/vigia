@@ -274,3 +274,16 @@ class PlanFacturacion(models.Model):
 
     def __str__(self):
         return f"{self.clinica} - {self.plan} - {self.estado}"
+
+class EmailNotificacion(models.Model):
+    clinica = models.ForeignKey(Clinica, on_delete=models.CASCADE, related_name='emails_notificacion')
+    email = models.EmailField()
+    nombre = models.CharField(max_length=100, blank=True)
+    activo = models.BooleanField(default=True)
+    creado_en = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ['clinica', 'email']
+
+    def __str__(self):
+        return f"{self.email} - {self.clinica.nombre}"

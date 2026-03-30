@@ -2,7 +2,7 @@ from rest_framework import serializers
 from .models import (
     Clinica, Sede, Usuario, Medico, Paciente, Cita, Encuesta,
     RegistroKPI, Alerta, Notificacion, FeedbackAlerta,
-    ConfiguracionAlerta, IntegracionExterna, SyncLog, PlanFacturacion
+    ConfiguracionAlerta, IntegracionExterna, SyncLog, PlanFacturacion, EmailNotificacion
 )
 
 class ClinicaSerializer(serializers.ModelSerializer):
@@ -78,4 +78,9 @@ class SyncLogSerializer(serializers.ModelSerializer):
 class PlanFacturacionSerializer(serializers.ModelSerializer):
     class Meta:
         model = PlanFacturacion
+        fields = '__all__'
+
+class EmailNotificacionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EmailNotificacion
         fields = '__all__'
