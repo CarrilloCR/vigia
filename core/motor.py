@@ -218,14 +218,14 @@ def correr_motor(clinica_id, enviar_notif=False):
             tipo=tipo_kpi,
         ).order_by('-fecha_hora')[1:60].values_list('valor', flat=True))
 
-        # Historical values with dates (for Prophet)
+        # Historical values with dates (for Prophet) — exclude the latest record
         historico_qs = RegistroKPI.objects.filter(
             clinica_id=clinica_id,
             tipo=tipo_kpi,
-        ).order_by('fecha_hora')[:-1].values_list('fecha_hora', 'valor')
+        ).exclude(pk=ultimo.pk).order_by('fecha_hora').values_list('fecha_hora', 'valor')
         historico_con_fechas = list(historico_qs) if historico_qs.count() >= 14 else None
 
-        es_anomalia, valor_esperado, desviacion, metodo = detectar_anomalia_ensemble(
+        es_anomalia, valor_esperado, desviacion, metodo, detalle = detectar_anomalia_ensemble(
             valor_actual, historico, historico_con_fechas
         )
 
@@ -248,6 +248,7 @@ def correr_motor(clinica_id, enviar_notif=False):
                 mensaje=mensaje,
                 recomendacion=recomendacion,
                 metodo_deteccion=metodo,
+                detalle_deteccion=detalle,
                 estado='activa'
             )
             alertas_creadas.append(alerta.id)

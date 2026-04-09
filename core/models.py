@@ -163,6 +163,7 @@ class Alerta(models.Model):
     mensaje = models.TextField()
     recomendacion = models.TextField(blank=True)
     metodo_deteccion = models.CharField(max_length=50, default='estadistico', help_text='Metodo que detecto la anomalia: estadistico, prophet, pyod, ensemble:...')
+    detalle_deteccion = models.JSONField(default=dict, blank=True, help_text='Resultados individuales de cada método de detección')
     estado = models.CharField(max_length=10, choices=ESTADO_CHOICES, default='activa')
     creada_en = models.DateTimeField(auto_now_add=True)
     revisada_en = models.DateTimeField(null=True, blank=True)
