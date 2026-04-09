@@ -4,6 +4,7 @@ import os
 from django.utils import timezone
 from datetime import timedelta
 from .models import Cita, RegistroKPI, Alerta, Clinica, Encuesta
+from .deteccion import detectar_anomalia_ensemble
 
 def calcular_tasa_cancelacion(clinica_id):
     hoy = timezone.now().date()
@@ -211,12 +212,22 @@ def correr_motor(clinica_id, enviar_notif=False):
 
         valor_actual = ultimo.valor
 
+        # Historical values (for statistical + PyOD)
         historico = list(RegistroKPI.objects.filter(
             clinica_id=clinica_id,
             tipo=tipo_kpi,
-        ).order_by('-fecha_hora')[1:30].values_list('valor', flat=True))
+        ).order_by('-fecha_hora')[1:60].values_list('valor', flat=True))
 
-        es_anomalia, valor_esperado, desviacion = detectar_anomalia(valor_actual, historico)
+        # Historical values with dates (for Prophet)
+        historico_qs = RegistroKPI.objects.filter(
+            clinica_id=clinica_id,
+            tipo=tipo_kpi,
+        ).order_by('fecha_hora')[:-1].values_list('fecha_hora', 'valor')
+        historico_con_fechas = list(historico_qs) if historico_qs.count() >= 14 else None
+
+        es_anomalia, valor_esperado, desviacion, metodo = detectar_anomalia_ensemble(
+            valor_actual, historico, historico_con_fechas
+        )
 
         if es_anomalia:
             severidad = determinar_severidad(desviacion)
@@ -236,6 +247,7 @@ def correr_motor(clinica_id, enviar_notif=False):
                 severidad=severidad,
                 mensaje=mensaje,
                 recomendacion=recomendacion,
+                metodo_deteccion=metodo,
                 estado='activa'
             )
             alertas_creadas.append(alerta.id)
