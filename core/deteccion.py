@@ -115,7 +115,7 @@ def detectar_pyod(valor_actual, historico, contamination=0.1):
         logger.warning("PyOD no instalado, omitiendo deteccion PyOD")
         return None, None, None, None
 
-    if len(historico) < 10:
+    if len(historico) < 5:
         return None, None, None, None
 
     try:

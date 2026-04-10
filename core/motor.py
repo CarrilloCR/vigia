@@ -131,11 +131,11 @@ def detectar_anomalia(valor_actual, historico, umbral=20):
     return es_anomalia, round(promedio, 2), round(desviacion, 2)
 
 def determinar_severidad(desviacion):
-    if desviacion >= 60:
+    if desviacion >= 80:
         return 'critica'
-    elif desviacion >= 40:
+    elif desviacion >= 60:
         return 'alta'
-    elif desviacion >= 20:
+    elif desviacion >= 35:
         return 'media'
     return 'baja'
 
