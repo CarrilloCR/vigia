@@ -57,3 +57,4 @@ numpy>=1.26.0
 pandas>=2.1.0
 prophet>=1.1.5
 pyod>=1.1.0
+twilio>=9.0.0
