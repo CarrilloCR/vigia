@@ -8,7 +8,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-o7gz=@b92*viofjn=3n%4*%=2wm=9$%(n+rd=t^=32d-01@r*t')
 
-DEBUG = True
+DEBUG = os.getenv('DJANGO_DEBUG', 'True') == 'True'
 
 ALLOWED_HOSTS = ['*']
 
@@ -111,11 +111,17 @@ CELERY_TIMEZONE = 'America/Costa_Rica'
 
 # Celery Beat — schedules automáticos
 from celery.schedules import crontab
+
 CELERY_BEAT_SCHEDULE = {
     # Corre cada hora en punto; la task internamente filtra por intervalo configurado
     'motor-automatico-horario': {
         'task': 'core.tasks.verificar_y_correr_motor_automatico',
         'schedule': crontab(minute=0),
+    },
+    # Limpieza diaria: alertas activas > 7 días → resueltas
+    'limpiar-alertas-24h': {
+        'task': 'core.tasks.limpiar_alertas_viejas_task',
+        'schedule': crontab(hour=3, minute=0),
     },
 }
 
@@ -136,11 +142,9 @@ PASSWORD_HASHERS = [
     'django.contrib.auth.hashers.PBKDF2PasswordHasher',
 ]
 
-from celery.schedules import crontab
-
-CELERY_BEAT_SCHEDULE = {
-    'generar-datos-y-analizar': {
+# En desarrollo: genera datos falsos cada 5 minutos
+if DEBUG:
+    CELERY_BEAT_SCHEDULE['generador-dev'] = {
         'task': 'core.tasks.generar_datos_falsos_task',
-        'schedule': 300.0,  # cada 5 minutos
-    },
-}
+        'schedule': crontab(minute='*/5'),
+    }

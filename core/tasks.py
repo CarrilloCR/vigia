@@ -233,3 +233,84 @@ def generar_datos_clinica_task(clinica_id):
     from .generador import generar_datos_clinica
     generar_datos_clinica(clinica_id)
     return f"Datos generados para clínica {clinica_id}"
+
+
+@shared_task
+def limpiar_alertas_viejas_task(dias=7):
+    """Marca como resueltas las alertas activas más viejas que `dias` días."""
+    from django.utils import timezone
+    from datetime import timedelta
+    limite = timezone.now() - timedelta(days=dias)
+    count = Alerta.objects.filter(
+        estado='activa',
+        creada_en__lt=limite
+    ).update(estado='resuelta', revisada_en=timezone.now())
+    return f"Limpieza: {count} alertas marcadas como resueltas"
+
+
+@shared_task
+def enviar_whatsapp_task(notificacion_id, alerta_ids, destinatario):
+    """Envía mensaje WhatsApp vía Twilio con resumen de alertas."""
+    try:
+        from twilio.rest import Client
+        from dotenv import load_dotenv
+        from pathlib import Path
+        env_path = Path(__file__).resolve().parent.parent / '.env'
+        load_dotenv(env_path)
+
+        account_sid = os.getenv('TWILIO_ACCOUNT_SID')
+        auth_token  = os.getenv('TWILIO_AUTH_TOKEN')
+        from_number = os.getenv('TWILIO_FROM_NUMBER')  # format: whatsapp:+14155238886
+
+        if not all([account_sid, auth_token, from_number]):
+            return "Twilio no configurado — faltan variables de entorno"
+
+        alertas = Alerta.objects.filter(id__in=alerta_ids).order_by('-severidad')
+        total   = alertas.count()
+        criticas = alertas.filter(severidad='critica').count()
+        altas    = alertas.filter(severidad='alta').count()
+
+        # Texto compacto para WhatsApp
+        emoji_map = {'critica': '🔴', 'alta': '🟠', 'media': '🟡', 'baja': '🟢'}
+        lineas = []
+        for a in alertas[:5]:  # máximo 5 en el mensaje
+            emoji = emoji_map.get(a.severidad, '⚠️')
+            kpi = a.tipo_kpi.replace('_', ' ').title()
+            lineas.append(f"{emoji} *{kpi}*: {a.valor_detectado} (esperado {a.valor_esperado})")
+
+        body = (
+            f"🏥 *Vigía — Alerta{'s' if total > 1 else ''}*\n"
+            f"{total} anomalía{'s' if total > 1 else ''} detectada{'s' if total > 1 else ''}"
+            + (f" · {criticas} crítica{'s' if criticas > 1 else ''}" if criticas else "")
+            + (f" · {altas} alta{'s' if altas > 1 else ''}" if altas else "")
+            + "\n\n"
+            + "\n".join(lineas)
+            + (f"\n_...y {total - 5} más_" if total > 5 else "")
+            + "\n\n_Vigía · Sistema de Alertas_"
+        )
+
+        client = Client(account_sid, auth_token)
+        client.messages.create(
+            body=body,
+            from_=from_number,
+            to=f"whatsapp:{destinatario}"
+        )
+
+        try:
+            notif = Notificacion.objects.get(id=notificacion_id)
+            notif.estado = 'enviada'
+            notif.enviada_en = timezone.now()
+            notif.save()
+        except Exception:
+            pass
+
+        return f"WhatsApp enviado a {destinatario} — {total} alertas"
+
+    except Exception as e:
+        try:
+            notif = Notificacion.objects.get(id=notificacion_id)
+            notif.estado = 'fallida'
+            notif.save()
+        except Exception:
+            pass
+        return f"Error enviando WhatsApp: {e}"

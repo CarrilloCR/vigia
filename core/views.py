@@ -48,6 +48,50 @@ class UsuarioViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(clinica_id=clinica_id)
         return queryset
 
+    @action(detail=False, methods=['post'])
+    def invitar(self, request):
+        from django.contrib.hashers import make_password
+        import secrets
+        clinica_id = request.data.get('clinica_id')
+        email = request.data.get('email', '').strip()
+        nombre = request.data.get('nombre', '').strip()
+        rol = request.data.get('rol', 'viewer')
+
+        if not email or not clinica_id:
+            return Response({'error': 'email y clinica_id son requeridos'}, status=status.HTTP_400_BAD_REQUEST)
+        if Usuario.objects.filter(email=email).exists():
+            return Response({'error': 'Ya existe un usuario con ese email'}, status=status.HTTP_400_BAD_REQUEST)
+
+        temp_password = secrets.token_urlsafe(12)
+        usuario = Usuario.objects.create(
+            clinica_id=clinica_id,
+            nombre=nombre or email.split('@')[0],
+            email=email,
+            password_hash=make_password(temp_password),
+            rol=rol,
+        )
+        serializer = self.get_serializer(usuario)
+        return Response({**serializer.data, 'temp_password': temp_password}, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'])
+    def desactivar(self, request, pk=None):
+        # Reutilizamos el campo 'activo' — si no existe en el modelo, simplemente
+        # bloqueamos marcando el email con prefijo INACTIVO
+        usuario = self.get_object()
+        usuario.email = f"INACTIVO_{usuario.id}_{usuario.email}" if not usuario.email.startswith('INACTIVO') else usuario.email
+        usuario.save()
+        return Response({'status': 'usuario desactivado'})
+
+    @action(detail=True, methods=['post'])
+    def cambiar_rol(self, request, pk=None):
+        usuario = self.get_object()
+        nuevo_rol = request.data.get('rol')
+        if nuevo_rol not in ('admin', 'viewer'):
+            return Response({'error': 'rol inválido'}, status=status.HTTP_400_BAD_REQUEST)
+        usuario.rol = nuevo_rol
+        usuario.save()
+        return Response({'status': 'rol actualizado', 'rol': nuevo_rol})
+
 
 class MedicoViewSet(viewsets.ModelViewSet):
     queryset = Medico.objects.all()
@@ -145,6 +189,11 @@ class AlertaViewSet(viewsets.ModelViewSet):
         if medico_id:
             queryset = queryset.filter(medico_id=medico_id)
 
+        dias = self.request.query_params.get('dias')
+        if dias:
+            desde = timezone.now() - timedelta(days=int(dias))
+            queryset = queryset.filter(creada_en__gte=desde)
+
         return queryset.order_by('-creada_en')
 
     @action(detail=True, methods=['post'])
@@ -193,13 +242,25 @@ class NotificacionViewSet(viewsets.ModelViewSet):
         alerta_id = self.request.query_params.get('alerta')
         usuario_id = self.request.query_params.get('usuario')
         estado = self.request.query_params.get('estado')
+        clinica_id = self.request.query_params.get('clinica')
         if alerta_id:
             queryset = queryset.filter(alerta_id=alerta_id)
         if usuario_id:
             queryset = queryset.filter(usuario_id=usuario_id)
         if estado:
             queryset = queryset.filter(estado=estado)
+        if clinica_id:
+            queryset = queryset.filter(alerta__clinica_id=clinica_id)
         return queryset.order_by('-enviada_en')
+
+    @action(detail=False, methods=['post'])
+    def marcar_todas_leidas(self, request):
+        clinica_id = request.data.get('clinica_id')
+        qs = Notificacion.objects.filter(estado__in=['enviada', 'entregada', 'pendiente'])
+        if clinica_id:
+            qs = qs.filter(alerta__clinica_id=clinica_id)
+        count = qs.update(estado='leida', leida_en=timezone.now())
+        return Response({'status': f'{count} notificaciones marcadas como leídas'})
 
 
 class FeedbackAlertaViewSet(viewsets.ModelViewSet):
@@ -297,3 +358,147 @@ def generar_datos(request):
     else:
         generar_datos_falsos_task.delay()
         return Response({'status': 'Generando datos para todas las clínicas'})
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def importar_csv(request):
+    """
+    Importa un archivo CSV para crear RegistroKPI o Cita.
+    Params: clinica_id, tipo (kpi|citas), file (multipart)
+    Columnas KPI: tipo,valor,fecha_hora (fecha_hora opcional, usa now())
+    Columnas Citas: medico_id,estado,ingreso_generado,fecha_hora_agendada (medico_id puede ser vacío)
+    """
+    import csv
+    import io
+    from django.utils.dateparse import parse_datetime
+
+    clinica_id = request.data.get('clinica_id')
+    tipo = request.data.get('tipo', 'kpi')
+    archivo = request.FILES.get('file')
+
+    if not clinica_id or not archivo:
+        return Response({'error': 'clinica_id y file son requeridos'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        clinica = Clinica.objects.get(id=clinica_id)
+    except Clinica.DoesNotExist:
+        return Response({'error': 'Clínica no encontrada'}, status=status.HTTP_404_NOT_FOUND)
+
+    # Crear o reutilizar la integración CSV de esta clínica
+    integracion, _ = IntegracionExterna.objects.get_or_create(
+        clinica=clinica, tipo='csv',
+        defaults={'nombre': 'Importación CSV', 'estado': 'activa'}
+    )
+
+    errores = []
+    creados = 0
+
+    try:
+        contenido = archivo.read().decode('utf-8-sig')
+        reader = csv.DictReader(io.StringIO(contenido))
+        filas = list(reader)
+
+        TIPOS_KPI_VALIDOS = [
+            'tasa_cancelacion', 'tasa_noshow', 'ocupacion_agenda', 'tiempo_espera',
+            'ingresos_dia', 'ticket_promedio', 'pacientes_nuevos', 'retencion_90',
+            'cancelaciones_medico', 'citas_reagendadas', 'nps',
+        ]
+        ESTADOS_CITA_VALIDOS = ['agendada', 'completada', 'cancelada', 'no_show', 'reagendada']
+
+        if tipo == 'kpi':
+            for i, fila in enumerate(filas, 1):
+                try:
+                    tipo_kpi = fila.get('tipo', '').strip()
+                    valor_str = fila.get('valor', '').strip()
+                    fecha_str = fila.get('fecha_hora', '').strip()
+
+                    if tipo_kpi not in TIPOS_KPI_VALIDOS:
+                        errores.append(f"Fila {i}: tipo '{tipo_kpi}' no válido")
+                        continue
+                    valor = float(valor_str)
+                    fecha = parse_datetime(fecha_str) if fecha_str else timezone.now()
+
+                    RegistroKPI.objects.create(
+                        clinica=clinica,
+                        tipo=tipo_kpi,
+                        valor=valor,
+                        fecha_hora=fecha or timezone.now(),
+                        periodo='dia',
+                    )
+                    creados += 1
+                except (ValueError, KeyError) as e:
+                    errores.append(f"Fila {i}: {e}")
+
+        elif tipo == 'citas':
+            for i, fila in enumerate(filas, 1):
+                try:
+                    medico_id = fila.get('medico_id', '').strip() or None
+                    estado    = fila.get('estado', 'completada').strip()
+                    ingreso   = float(fila.get('ingreso_generado', 0) or 0)
+                    fecha_str = fila.get('fecha_hora_agendada', '').strip()
+
+                    if estado not in ESTADOS_CITA_VALIDOS:
+                        errores.append(f"Fila {i}: estado '{estado}' no válido")
+                        continue
+
+                    fecha = parse_datetime(fecha_str) if fecha_str else timezone.now()
+
+                    # Necesitamos un paciente mínimo — usamos el primero de la clínica o creamos uno genérico
+                    paciente = Paciente.objects.filter(clinica=clinica).first()
+                    if not paciente:
+                        errores.append(f"Fila {i}: no hay pacientes en la clínica para asignar")
+                        continue
+
+                    medico = None
+                    if medico_id:
+                        try:
+                            medico = Medico.objects.get(id=int(medico_id), clinica=clinica)
+                        except (Medico.DoesNotExist, ValueError):
+                            errores.append(f"Fila {i}: médico {medico_id} no encontrado")
+                            continue
+
+                    if not medico:
+                        medico = Medico.objects.filter(clinica=clinica, activo=True).first()
+                        if not medico:
+                            errores.append(f"Fila {i}: no hay médicos activos en la clínica")
+                            continue
+
+                    Cita.objects.create(
+                        clinica=clinica,
+                        medico=medico,
+                        paciente=paciente,
+                        fecha_hora_agendada=fecha or timezone.now(),
+                        estado=estado,
+                        ingreso_generado=ingreso,
+                    )
+                    creados += 1
+                except Exception as e:
+                    errores.append(f"Fila {i}: {e}")
+
+        # Crear SyncLog
+        SyncLog.objects.create(
+            integracion=integracion,
+            registros_importados=creados,
+            exitoso=len(errores) == 0,
+            error_detalle='\n'.join(errores[:20]) if errores else '',
+        )
+        integracion.ultima_sync = timezone.now()
+        integracion.estado = 'activa' if len(errores) == 0 else 'error'
+        integracion.save()
+
+        return Response({
+            'creados': creados,
+            'errores': errores[:20],
+            'total_filas': len(filas),
+            'tipo': tipo,
+        })
+
+    except Exception as e:
+        SyncLog.objects.create(
+            integracion=integracion,
+            registros_importados=0,
+            exitoso=False,
+            error_detalle=str(e),
+        )
+        return Response({'error': f'Error al procesar el archivo: {e}'}, status=status.HTTP_400_BAD_REQUEST)

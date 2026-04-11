@@ -21,6 +21,7 @@ class Clinica(models.Model):
     ])
     ultimo_motor_en = models.DateTimeField(null=True, blank=True)
     claude_activo = models.BooleanField(default=True)
+    whatsapp_numero = models.CharField(max_length=20, blank=True, default='')
 
     def __str__(self):
         return self.nombre
