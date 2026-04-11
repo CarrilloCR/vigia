@@ -233,7 +233,7 @@ def correr_motor(clinica_id, enviar_notif=False):
             severidad = determinar_severidad(desviacion)
             mensaje = generar_mensaje(tipo_kpi, valor_actual, valor_esperado, desviacion, clinica.nombre)
 
-            if severidad in ['alta', 'critica']:
+            if severidad in ['alta', 'critica'] and clinica.claude_activo:
                 recomendacion = generar_recomendacion_ia(tipo_kpi, valor_actual, valor_esperado, desviacion, clinica.nombre, severidad)
             else:
                 recomendacion = 'Monitorear la situación y revisar si el patrón continúa en las próximas horas.'
@@ -252,6 +252,11 @@ def correr_motor(clinica_id, enviar_notif=False):
                 estado='activa'
             )
             alertas_creadas.append(alerta.id)
+
+    # Registrar timestamp del último motor run
+    from django.utils import timezone as tz
+    clinica.ultimo_motor_en = tz.now()
+    clinica.save(update_fields=['ultimo_motor_en'])
 
     # Enviar UN solo email con todas las alertas del ciclo
     if enviar_notif and alertas_creadas:

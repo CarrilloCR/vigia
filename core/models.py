@@ -14,6 +14,14 @@ class Clinica(models.Model):
     activa = models.BooleanField(default=True)
     creada_en = models.DateTimeField(auto_now_add=True)
 
+    # Automatización
+    motor_automatico = models.BooleanField(default=False)
+    motor_intervalo_horas = models.IntegerField(default=1, choices=[
+        (1, '1 hora'), (6, '6 horas'), (12, '12 horas'), (24, '24 horas'),
+    ])
+    ultimo_motor_en = models.DateTimeField(null=True, blank=True)
+    claude_activo = models.BooleanField(default=True)
+
     def __str__(self):
         return self.nombre
 

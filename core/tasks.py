@@ -200,6 +200,28 @@ def ejecutar_motor_todas_clinicas():
 
 
 @shared_task
+def verificar_y_correr_motor_automatico():
+    """Celery Beat lo llama cada hora. Solo corre el motor en clínicas
+    con motor_automatico=True y donde ya pasó el intervalo configurado."""
+    from django.utils import timezone
+    from datetime import timedelta
+
+    clinicas = Clinica.objects.filter(activa=True, motor_automatico=True)
+    disparadas = 0
+    for clinica in clinicas:
+        intervalo = timedelta(hours=clinica.motor_intervalo_horas)
+        ya_paso = (
+            clinica.ultimo_motor_en is None
+            or (timezone.now() - clinica.ultimo_motor_en) >= intervalo
+        )
+        if ya_paso:
+            ejecutar_motor_task.delay(clinica.id)
+            disparadas += 1
+
+    return f"Motor automático: {disparadas}/{clinicas.count()} clínicas disparadas"
+
+
+@shared_task
 def generar_datos_falsos_task():
     from .generador import generar_datos_todas_clinicas
     resultado = generar_datos_todas_clinicas()

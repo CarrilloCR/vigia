@@ -109,6 +109,16 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'America/Costa_Rica'
 
+# Celery Beat — schedules automáticos
+from celery.schedules import crontab
+CELERY_BEAT_SCHEDULE = {
+    # Corre cada hora en punto; la task internamente filtra por intervalo configurado
+    'motor-automatico-horario': {
+        'task': 'core.tasks.verificar_y_correr_motor_automatico',
+        'schedule': crontab(minute=0),
+    },
+}
+
 from datetime import timedelta
 
 # JWT
