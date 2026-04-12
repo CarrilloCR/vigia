@@ -101,20 +101,33 @@ def register(request):
             activa=True
         )
 
-        # Crear usuario Vigía
+        # Crear usuario Vigía — inicia como viewer, debe solicitar admin
         usuario_vigia = Usuario.objects.create(
             clinica=clinica,
             sede=sede,
             nombre=nombre,
             email=email,
             password_hash=user.password,
-            rol='admin'
+            rol='viewer'
         )
+
+        # Crear solicitud de rol admin automática y notificar a carrillo
+        from .models import SolicitudRol
+        solicitud = SolicitudRol.objects.create(
+            usuario=usuario_vigia,
+            rol_solicitado='admin',
+            motivo=f'Registro de nueva clínica: {nombre_clinica}',
+        )
+        try:
+            from .tasks import enviar_email_solicitud_rol_task
+            enviar_email_solicitud_rol_task.delay(solicitud.id)
+        except Exception:
+            pass
 
         tokens = get_tokens_for_user(user)
 
         return Response({
-            'message': 'Cuenta creada exitosamente.',
+            'message': 'Cuenta creada. Acceso en revisión — recibirás confirmación pronto.',
             'tokens': tokens,
             'user': {
                 'id': usuario_vigia.id,
