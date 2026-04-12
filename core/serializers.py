@@ -2,7 +2,8 @@ from rest_framework import serializers
 from .models import (
     Clinica, Sede, Usuario, Medico, Paciente, Cita, Encuesta,
     RegistroKPI, Alerta, Notificacion, FeedbackAlerta,
-    ConfiguracionAlerta, IntegracionExterna, SyncLog, PlanFacturacion, EmailNotificacion
+    ConfiguracionAlerta, IntegracionExterna, SyncLog, PlanFacturacion, EmailNotificacion,
+    SolicitudRol
 )
 
 
@@ -108,4 +109,13 @@ class PlanFacturacionSerializer(serializers.ModelSerializer):
 class EmailNotificacionSerializer(serializers.ModelSerializer):
     class Meta:
         model = EmailNotificacion
+        fields = '__all__'
+
+class SolicitudRolSerializer(serializers.ModelSerializer):
+    usuario_nombre = serializers.CharField(source='usuario.nombre', read_only=True)
+    usuario_email = serializers.CharField(source='usuario.email', read_only=True)
+    revisada_por_nombre = serializers.CharField(source='revisada_por.nombre', read_only=True)
+
+    class Meta:
+        model = SolicitudRol
         fields = '__all__'

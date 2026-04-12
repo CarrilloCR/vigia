@@ -41,6 +41,8 @@ class Sede(models.Model):
 class Usuario(models.Model):
     ROL_CHOICES = [
         ('admin', 'Administrador'),
+        ('gerente', 'Gerente'),
+        ('medico', 'Personal Médico'),
         ('viewer', 'Visualizador'),
     ]
     clinica = models.ForeignKey(Clinica, on_delete=models.CASCADE, related_name='usuarios')
@@ -303,3 +305,23 @@ class EmailNotificacion(models.Model):
 
     def __str__(self):
         return f"{self.email} - {self.clinica.nombre}"
+
+
+class SolicitudRol(models.Model):
+    ESTADO_CHOICES = [
+        ('pendiente', 'Pendiente'),
+        ('aprobada', 'Aprobada'),
+        ('rechazada', 'Rechazada'),
+    ]
+    usuario = models.ForeignKey(Usuario, on_delete=models.CASCADE, related_name='solicitudes_rol')
+    rol_solicitado = models.CharField(max_length=20, choices=Usuario.ROL_CHOICES)
+    motivo = models.TextField(blank=True)
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default='pendiente')
+    revisada_por = models.ForeignKey(
+        Usuario, on_delete=models.SET_NULL, null=True, blank=True, related_name='solicitudes_revisadas'
+    )
+    creada_en = models.DateTimeField(auto_now_add=True)
+    revisada_en = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"{self.usuario} → {self.rol_solicitado} ({self.estado})"

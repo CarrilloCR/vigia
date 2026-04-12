@@ -7,7 +7,8 @@ from datetime import timedelta
 from .models import (
     Clinica, Sede, Usuario, Medico, Paciente, Cita, Encuesta,
     RegistroKPI, Alerta, Notificacion, FeedbackAlerta,
-    ConfiguracionAlerta, IntegracionExterna, SyncLog, PlanFacturacion, EmailNotificacion
+    ConfiguracionAlerta, IntegracionExterna, SyncLog, PlanFacturacion, EmailNotificacion,
+    SolicitudRol
 )
 from .serializers import (
     ClinicaSerializer, SedeSerializer, UsuarioSerializer,
@@ -15,7 +16,8 @@ from .serializers import (
     EncuestaSerializer, RegistroKPISerializer, AlertaSerializer,
     NotificacionSerializer, FeedbackAlertaSerializer,
     ConfiguracionAlertaSerializer, IntegracionExternaSerializer,
-    SyncLogSerializer, PlanFacturacionSerializer, EmailNotificacionSerializer
+    SyncLogSerializer, PlanFacturacionSerializer, EmailNotificacionSerializer,
+    SolicitudRolSerializer
 )
 from .motor import correr_motor
 
@@ -86,7 +88,7 @@ class UsuarioViewSet(viewsets.ModelViewSet):
     def cambiar_rol(self, request, pk=None):
         usuario = self.get_object()
         nuevo_rol = request.data.get('rol')
-        if nuevo_rol not in ('admin', 'viewer'):
+        if nuevo_rol not in ('admin', 'gerente', 'medico', 'viewer'):
             return Response({'error': 'rol inválido'}, status=status.HTTP_400_BAD_REQUEST)
         usuario.rol = nuevo_rol
         usuario.save()
@@ -502,3 +504,55 @@ def importar_csv(request):
             error_detalle=str(e),
         )
         return Response({'error': f'Error al procesar el archivo: {e}'}, status=status.HTTP_400_BAD_REQUEST)
+
+class SolicitudRolViewSet(viewsets.ModelViewSet):
+    queryset = SolicitudRol.objects.all()
+    serializer_class = SolicitudRolSerializer
+
+    def get_queryset(self):
+        qs = SolicitudRol.objects.select_related('usuario', 'revisada_por').all()
+        clinica_id = self.request.query_params.get('clinica')
+        estado = self.request.query_params.get('estado')
+        usuario_id = self.request.query_params.get('usuario')
+        if clinica_id:
+            qs = qs.filter(usuario__clinica_id=clinica_id)
+        if estado:
+            qs = qs.filter(estado=estado)
+        if usuario_id:
+            qs = qs.filter(usuario_id=usuario_id)
+        return qs.order_by('-creada_en')
+
+    @action(detail=True, methods=['post'])
+    def aprobar(self, request, pk=None):
+        solicitud = self.get_object()
+        if solicitud.estado != 'pendiente':
+            return Response({'error': 'Solo se pueden aprobar solicitudes pendientes'}, status=status.HTTP_400_BAD_REQUEST)
+        revisor_id = request.data.get('revisor_id')
+        solicitud.estado = 'aprobada'
+        solicitud.revisada_en = timezone.now()
+        if revisor_id:
+            try:
+                solicitud.revisada_por = Usuario.objects.get(id=revisor_id)
+            except Usuario.DoesNotExist:
+                pass
+        solicitud.save()
+        # Apply the role change
+        solicitud.usuario.rol = solicitud.rol_solicitado
+        solicitud.usuario.save(update_fields=['rol'])
+        return Response({'status': 'aprobada', 'nuevo_rol': solicitud.rol_solicitado})
+
+    @action(detail=True, methods=['post'])
+    def rechazar(self, request, pk=None):
+        solicitud = self.get_object()
+        if solicitud.estado != 'pendiente':
+            return Response({'error': 'Solo se pueden rechazar solicitudes pendientes'}, status=status.HTTP_400_BAD_REQUEST)
+        revisor_id = request.data.get('revisor_id')
+        solicitud.estado = 'rechazada'
+        solicitud.revisada_en = timezone.now()
+        if revisor_id:
+            try:
+                solicitud.revisada_por = Usuario.objects.get(id=revisor_id)
+            except Usuario.DoesNotExist:
+                pass
+        solicitud.save()
+        return Response({'status': 'rechazada'})

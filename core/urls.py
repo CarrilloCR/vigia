@@ -7,7 +7,8 @@ from .views import (
     EncuestaViewSet, RegistroKPIViewSet, AlertaViewSet,
     NotificacionViewSet, FeedbackAlertaViewSet,
     ConfiguracionAlertaViewSet, IntegracionExternaViewSet, EmailNotificacionViewSet,
-    SyncLogViewSet, PlanFacturacionViewSet, ejecutar_motor, generar_datos, importar_csv
+    SyncLogViewSet, PlanFacturacionViewSet, SolicitudRolViewSet,
+    ejecutar_motor, generar_datos, importar_csv
 )
 from .auth import register, login, logout, me, cambiar_password
 
@@ -28,6 +29,7 @@ router.register(r'integraciones', IntegracionExternaViewSet)
 router.register(r'synclogs', SyncLogViewSet)
 router.register(r'planes', PlanFacturacionViewSet)
 router.register(r'emails-notificacion', EmailNotificacionViewSet)
+router.register(r'solicitudes-rol', SolicitudRolViewSet)
 
 urlpatterns = [
     path('', include(router.urls)),
