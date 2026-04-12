@@ -195,6 +195,81 @@ def enviar_email_agrupado_task(notificacion_id, alerta_ids, destinatario):
 
 
 @shared_task
+def enviar_email_solicitud_rol_task(solicitud_id):
+    """Notifica a los admins de la clínica y a carrillo982k@gmail.com cuando se crea una solicitud de cambio de rol."""
+    try:
+        from sendgrid import SendGridAPIClient
+        from sendgrid.helpers.mail import Mail
+        from dotenv import load_dotenv
+        from pathlib import Path
+        env_path = Path(__file__).resolve().parent.parent / '.env'
+        load_dotenv(env_path)
+
+        from .models import SolicitudRol, Usuario
+        solicitud = SolicitudRol.objects.select_related('usuario', 'usuario__clinica').get(id=solicitud_id)
+        usuario = solicitud.usuario
+        clinica = usuario.clinica
+
+        ROL_LABELS = {
+            'admin': 'Administrador',
+            'gerente': 'Gerente',
+            'medico': 'Personal Médico',
+            'viewer': 'Visualizador',
+        }
+        rol_actual_label = ROL_LABELS.get(usuario.rol, usuario.rol)
+        rol_solicitado_label = ROL_LABELS.get(solicitud.rol_solicitado, solicitud.rol_solicitado)
+
+        # Destinatarios: admins de la clínica + siempre carrillo982k@gmail.com
+        admins = Usuario.objects.filter(clinica=clinica, rol='admin')
+        emails = {a.email for a in admins if a.email and not a.email.startswith('INACTIVO')}
+        emails.add('carrillo982k@gmail.com')
+
+        motivo_html = f"<p style='margin:8px 0;color:#555;'><strong>Motivo:</strong> {solicitud.motivo}</p>" if solicitud.motivo else ""
+
+        html_content = f"""
+        <div style="font-family: 'Segoe UI', Arial, sans-serif; max-width: 560px; margin: 0 auto; background: #F9F8FC; border-radius: 12px; overflow: hidden; border: 1px solid #E0DBF0;">
+            <div style="background: linear-gradient(135deg, #7C6FBF, #9B8EC4); padding: 28px 28px 20px; text-align: center;">
+                <h1 style="margin: 0; color: white; font-size: 24px; font-weight: 700; letter-spacing: -0.5px;">Vigía</h1>
+                <p style="margin: 6px 0 0; color: rgba(255,255,255,0.85); font-size: 13px;">Sistema de Alertas Inteligentes</p>
+            </div>
+            <div style="padding: 28px;">
+                <h2 style="margin: 0 0 16px; color: #3D2E6B; font-size: 18px;">Solicitud de cambio de rol</h2>
+                <div style="background: white; border: 1px solid #E0DBF0; border-radius: 10px; padding: 20px; margin-bottom: 16px;">
+                    <p style="margin: 0 0 10px; color: #555;"><strong>Clínica:</strong> {clinica.nombre}</p>
+                    <p style="margin: 0 0 10px; color: #555;"><strong>Usuario:</strong> {usuario.nombre} ({usuario.email})</p>
+                    <p style="margin: 0 0 10px; color: #555;"><strong>Rol actual:</strong> {rol_actual_label}</p>
+                    <p style="margin: 0; color: #7C6FBF;"><strong>Rol solicitado:</strong> {rol_solicitado_label}</p>
+                    {motivo_html}
+                </div>
+                <p style="color: #777; font-size: 13px; margin: 0;">Puedes aprobar o rechazar esta solicitud desde la sección <strong>Equipo</strong> en el panel de Vigía.</p>
+            </div>
+            <div style="background: #F5F3FA; padding: 14px 20px; border-radius: 0 0 12px 12px; text-align: center;">
+                <p style="margin: 0; font-size: 11px; color: #8B89A0;">Vigía — {timezone.now().strftime('%d/%m/%Y %H:%M')} · Este email fue generado automáticamente</p>
+            </div>
+        </div>
+        """
+
+        sg_api_key = os.getenv('SENDGRID_API_KEY')
+        from_email = os.getenv('SENDGRID_FROM_EMAIL')
+        if not sg_api_key or not from_email:
+            return "SendGrid no configurado"
+
+        sg = SendGridAPIClient(sg_api_key)
+        for email in emails:
+            mensaje = Mail(
+                from_email=from_email,
+                to_emails=email,
+                subject=f"Vigía — Solicitud de rol: {usuario.nombre} → {rol_solicitado_label}",
+                html_content=html_content,
+            )
+            sg.send(mensaje)
+
+        return f"Email solicitud rol enviado a {len(emails)} destinatarios"
+    except Exception as e:
+        return f"Error enviando email solicitud rol: {e}"
+
+
+@shared_task
 def enviar_notificaciones_task(alerta_id):
     """Mantener compatibilidad — redirige a la versión agrupada."""
     try:
