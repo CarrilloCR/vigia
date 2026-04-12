@@ -511,11 +511,15 @@ class SolicitudRolViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         instance = serializer.save()
+        from .tasks import enviar_email_solicitud_rol_task
         try:
-            from .tasks import enviar_email_solicitud_rol_task
             enviar_email_solicitud_rol_task.delay(instance.id)
         except Exception:
-            pass  # No bloquear la creación si Celery no está disponible
+            # Celery no disponible — enviar síncronamente
+            try:
+                enviar_email_solicitud_rol_task(instance.id)
+            except Exception:
+                pass
 
     def get_queryset(self):
         qs = SolicitudRol.objects.select_related('usuario', 'revisada_por').all()

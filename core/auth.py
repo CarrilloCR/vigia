@@ -118,11 +118,14 @@ def register(request):
             rol_solicitado='admin',
             motivo=f'Registro de nueva clínica: {nombre_clinica}',
         )
+        from .tasks import enviar_email_solicitud_rol_task
         try:
-            from .tasks import enviar_email_solicitud_rol_task
             enviar_email_solicitud_rol_task.delay(solicitud.id)
         except Exception:
-            pass
+            try:
+                enviar_email_solicitud_rol_task(solicitud.id)
+            except Exception:
+                pass
 
         tokens = get_tokens_for_user(user)
 

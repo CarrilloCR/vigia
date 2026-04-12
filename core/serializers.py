@@ -114,6 +114,7 @@ class EmailNotificacionSerializer(serializers.ModelSerializer):
 class SolicitudRolSerializer(serializers.ModelSerializer):
     usuario_nombre = serializers.CharField(source='usuario.nombre', read_only=True)
     usuario_email = serializers.CharField(source='usuario.email', read_only=True)
+    clinica_nombre = serializers.CharField(source='usuario.clinica.nombre', read_only=True)
     revisada_por_nombre = serializers.CharField(source='revisada_por.nombre', read_only=True)
 
     class Meta:
