@@ -13,7 +13,7 @@ def ejecutar_motor_task(clinica_id):
 
 @shared_task
 def enviar_notificaciones_agrupadas_task(clinica_id, alerta_ids):
-    """Envía un solo email con todas las alertas generadas en el análisis."""
+    """Envía un email agrupado y, si hay número WhatsApp configurado, también un mensaje de WhatsApp."""
     try:
         clinica = Clinica.objects.get(id=clinica_id)
         alertas = Alerta.objects.filter(id__in=alerta_ids)
@@ -21,15 +21,15 @@ def enviar_notificaciones_agrupadas_task(clinica_id, alerta_ids):
         if not alertas.exists():
             return "Sin alertas para notificar"
 
-        emails_destino = set()
-
-        # Emails de usuarios de la clínica
         usuarios = Usuario.objects.filter(clinica=clinica)
+        resultados = []
+
+        # ── Email ────────────────────────────────────────────────────────────
+        emails_destino = set()
         for u in usuarios:
             if u.email:
                 emails_destino.add(u.email)
 
-        # Emails adicionales del modelo EmailNotificacion
         try:
             from .models import EmailNotificacion
             emails_extra = EmailNotificacion.objects.filter(clinica=clinica, activo=True)
@@ -38,10 +38,6 @@ def enviar_notificaciones_agrupadas_task(clinica_id, alerta_ids):
         except Exception:
             pass
 
-        if not emails_destino:
-            return "Sin emails destino configurados"
-
-        # Una sola notificación por email
         for email in emails_destino:
             notif = Notificacion.objects.create(
                 alerta=alertas.first(),
@@ -52,7 +48,23 @@ def enviar_notificaciones_agrupadas_task(clinica_id, alerta_ids):
             )
             enviar_email_agrupado_task.delay(notif.id, list(alerta_ids), email)
 
-        return f"Notificación agrupada enviada a {len(emails_destino)} destinatarios"
+        if emails_destino:
+            resultados.append(f"email → {len(emails_destino)} destinatarios")
+
+        # ── WhatsApp ─────────────────────────────────────────────────────────
+        numero_wa = (clinica.whatsapp_numero or '').strip()
+        if numero_wa:
+            notif_wa = Notificacion.objects.create(
+                alerta=alertas.first(),
+                usuario=usuarios.first() if usuarios.exists() else None,
+                canal='whatsapp',
+                destinatario=numero_wa,
+                estado='pendiente'
+            )
+            enviar_whatsapp_task.delay(notif_wa.id, list(alerta_ids), numero_wa)
+            resultados.append(f"whatsapp → {numero_wa}")
+
+        return "Notificaciones enviadas: " + ", ".join(resultados) if resultados else "Sin destinatarios configurados"
 
     except Exception as e:
         return f"Error: {e}"
