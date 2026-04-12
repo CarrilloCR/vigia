@@ -139,19 +139,20 @@ def determinar_severidad(desviacion):
         return 'media'
     return 'baja'
 
-def generar_mensaje(tipo_kpi, valor_actual, valor_esperado, desviacion, clinica_nombre):
+def generar_mensaje(tipo_kpi, valor_actual, valor_esperado, desviacion, clinica_nombre, sede_nombre=None):
+    sede_str = f" · Sede {sede_nombre}" if sede_nombre else ""
     mensajes = {
-        'tasa_cancelacion': f"La tasa de cancelación de {clinica_nombre} es {valor_actual}%, cuando lo normal es {valor_esperado}%. Desviación de {desviacion}%.",
-        'tasa_noshow': f"La tasa de no-show de {clinica_nombre} es {valor_actual}%, cuando lo normal es {valor_esperado}%. Desviación de {desviacion}%.",
-        'ingresos_dia': f"Los ingresos del día en {clinica_nombre} son ${valor_actual}, cuando lo normal es ${valor_esperado}. Desviación de {desviacion}%.",
-        'ticket_promedio': f"El ticket promedio en {clinica_nombre} es ${valor_actual}, cuando lo normal es ${valor_esperado}. Desviación de {desviacion}%.",
-        'ocupacion_agenda': f"La ocupación de agenda en {clinica_nombre} es {valor_actual}%, cuando lo normal es {valor_esperado}%. Desviación de {desviacion}%.",
-        'pacientes_nuevos': f"El porcentaje de pacientes nuevos en {clinica_nombre} es {valor_actual}%, cuando lo normal es {valor_esperado}%. Desviación de {desviacion}%.",
-        'retencion_90': f"La retención a 90 días en {clinica_nombre} es {valor_actual}%, cuando lo normal es {valor_esperado}%. Desviación de {desviacion}%.",
-        'nps': f"El NPS de {clinica_nombre} es {valor_actual}, cuando lo normal es {valor_esperado}. Desviación de {desviacion}%.",
-        'citas_reagendadas': f"Las citas reagendadas en {clinica_nombre} son {valor_actual}%, cuando lo normal es {valor_esperado}%. Desviación de {desviacion}%.",
+        'tasa_cancelacion': f"La tasa de cancelación de {clinica_nombre}{sede_str} es {valor_actual}%, cuando lo normal es {valor_esperado}%. Desviación de {desviacion}%.",
+        'tasa_noshow': f"La tasa de no-show de {clinica_nombre}{sede_str} es {valor_actual}%, cuando lo normal es {valor_esperado}%. Desviación de {desviacion}%.",
+        'ingresos_dia': f"Los ingresos del día en {clinica_nombre}{sede_str} son ${valor_actual}, cuando lo normal es ${valor_esperado}. Desviación de {desviacion}%.",
+        'ticket_promedio': f"El ticket promedio en {clinica_nombre}{sede_str} es ${valor_actual}, cuando lo normal es ${valor_esperado}. Desviación de {desviacion}%.",
+        'ocupacion_agenda': f"La ocupación de agenda en {clinica_nombre}{sede_str} es {valor_actual}%, cuando lo normal es {valor_esperado}%. Desviación de {desviacion}%.",
+        'pacientes_nuevos': f"El porcentaje de pacientes nuevos en {clinica_nombre}{sede_str} es {valor_actual}%, cuando lo normal es {valor_esperado}%. Desviación de {desviacion}%.",
+        'retencion_90': f"La retención a 90 días en {clinica_nombre}{sede_str} es {valor_actual}%, cuando lo normal es {valor_esperado}%. Desviación de {desviacion}%.",
+        'nps': f"El NPS de {clinica_nombre}{sede_str} es {valor_actual}, cuando lo normal es {valor_esperado}. Desviación de {desviacion}%.",
+        'citas_reagendadas': f"Las citas reagendadas en {clinica_nombre}{sede_str} son {valor_actual}%, cuando lo normal es {valor_esperado}%. Desviación de {desviacion}%.",
     }
-    return mensajes.get(tipo_kpi, f"El KPI {tipo_kpi} tiene una desviación de {desviacion}% respecto al promedio histórico.")
+    return mensajes.get(tipo_kpi, f"El KPI {tipo_kpi}{sede_str} tiene una desviación de {desviacion}% respecto al promedio histórico.")
 
 def generar_recomendacion_ia(tipo_kpi, valor_actual, valor_esperado, desviacion, clinica_nombre, severidad):
     try:
@@ -211,19 +212,20 @@ def correr_motor(clinica_id, enviar_notif=False):
             continue
 
         valor_actual = ultimo.valor
+        sede = ultimo.sede  # propagate sede from the KPI record to the alert
+        sede_nombre = sede.nombre if sede else None
 
-        # Historical values (for statistical + PyOD)
-        historico = list(RegistroKPI.objects.filter(
+        # Historical values scoped to same sede (for statistical + PyOD)
+        historico_qs_base = RegistroKPI.objects.filter(
             clinica_id=clinica_id,
             tipo=tipo_kpi,
-        ).order_by('-fecha_hora')[1:60].values_list('valor', flat=True))
+            sede=sede,
+        )
+        historico = list(historico_qs_base.order_by('-fecha_hora')[1:60].values_list('valor', flat=True))
 
         # Historical values with dates (for Prophet) — exclude the latest record
-        historico_qs = RegistroKPI.objects.filter(
-            clinica_id=clinica_id,
-            tipo=tipo_kpi,
-        ).exclude(pk=ultimo.pk).order_by('fecha_hora').values_list('fecha_hora', 'valor')
-        historico_con_fechas = list(historico_qs) if historico_qs.count() >= 14 else None
+        historico_fechas_qs = historico_qs_base.exclude(pk=ultimo.pk).order_by('fecha_hora').values_list('fecha_hora', 'valor')
+        historico_con_fechas = list(historico_fechas_qs) if historico_fechas_qs.count() >= 14 else None
 
         es_anomalia, valor_esperado, desviacion, metodo, detalle = detectar_anomalia_ensemble(
             valor_actual, historico, historico_con_fechas
@@ -231,7 +233,7 @@ def correr_motor(clinica_id, enviar_notif=False):
 
         if es_anomalia:
             severidad = determinar_severidad(desviacion)
-            mensaje = generar_mensaje(tipo_kpi, valor_actual, valor_esperado, desviacion, clinica.nombre)
+            mensaje = generar_mensaje(tipo_kpi, valor_actual, valor_esperado, desviacion, clinica.nombre, sede_nombre)
 
             if severidad in ['alta', 'critica'] and clinica.claude_activo:
                 recomendacion = generar_recomendacion_ia(tipo_kpi, valor_actual, valor_esperado, desviacion, clinica.nombre, severidad)
@@ -240,6 +242,7 @@ def correr_motor(clinica_id, enviar_notif=False):
 
             alerta = Alerta.objects.create(
                 clinica_id=clinica_id,
+                sede=sede,
                 tipo_kpi=tipo_kpi,
                 valor_detectado=valor_actual,
                 valor_esperado=valor_esperado,

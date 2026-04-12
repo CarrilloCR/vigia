@@ -21,6 +21,7 @@ class Clinica(models.Model):
     ])
     ultimo_motor_en = models.DateTimeField(null=True, blank=True)
     claude_activo = models.BooleanField(default=True)
+    generador_activo = models.BooleanField(default=True)
     whatsapp_numero = models.CharField(max_length=20, blank=True, default='')
 
     def __str__(self):
@@ -60,6 +61,7 @@ class Usuario(models.Model):
 class Medico(models.Model):
     clinica = models.ForeignKey(Clinica, on_delete=models.CASCADE, related_name='medicos')
     sede = models.ForeignKey(Sede, on_delete=models.SET_NULL, null=True, blank=True, related_name='medicos')
+    usuario = models.ForeignKey('Usuario', on_delete=models.SET_NULL, null=True, blank=True, related_name='medico_perfil')
     nombre = models.CharField(max_length=100)
     apellido = models.CharField(max_length=100)
     especialidad = models.CharField(max_length=100)
@@ -76,6 +78,7 @@ class Medico(models.Model):
 
 class Paciente(models.Model):
     clinica = models.ForeignKey(Clinica, on_delete=models.CASCADE, related_name='pacientes')
+    sede = models.ForeignKey(Sede, on_delete=models.SET_NULL, null=True, blank=True, related_name='pacientes')
     nombre = models.CharField(max_length=100)
     apellido = models.CharField(max_length=100)
     fecha_nacimiento = models.DateField(null=True, blank=True)

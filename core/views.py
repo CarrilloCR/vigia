@@ -22,6 +22,48 @@ from .serializers import (
 from .motor import correr_motor
 
 
+# ─── Helper: sede-scope filtering ────────────────────────────────────────────
+
+def _get_usuario(request):
+    """Resolve the Vigía Usuario from the JWT-authenticated Django user."""
+    if request.user and request.user.is_authenticated:
+        try:
+            return Usuario.objects.get(email=request.user.email)
+        except Usuario.DoesNotExist:
+            pass
+    return None
+
+
+def apply_sede_scope(request, queryset, sede_field='sede_id'):
+    """
+    If the caller is a gerente with an assigned sede, force-filter to that sede.
+    Otherwise honour the ?sede= query param if present.
+    """
+    usuario = _get_usuario(request)
+    if usuario and usuario.rol == 'gerente' and usuario.sede_id:
+        return queryset.filter(**{sede_field: usuario.sede_id})
+    sede_id = request.query_params.get('sede')
+    if sede_id:
+        return queryset.filter(**{sede_field: sede_id})
+    return queryset
+
+
+# ─── Public endpoint: list clinics + sedes for registration ──────────────────
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def listar_clinicas_publico(request):
+    """Returns all active clinics with their active sedes — used in registration."""
+    clinicas = Clinica.objects.filter(activa=True).values('id', 'nombre')
+    result = []
+    for c in clinicas:
+        sedes = list(Sede.objects.filter(clinica_id=c['id'], activa=True).values('id', 'nombre'))
+        result.append({**c, 'sedes': sedes})
+    return Response(result)
+
+
+# ─── ViewSets ─────────────────────────────────────────────────────────────────
+
 class ClinicaViewSet(viewsets.ModelViewSet):
     queryset = Clinica.objects.all()
     serializer_class = ClinicaSerializer
@@ -48,6 +90,7 @@ class UsuarioViewSet(viewsets.ModelViewSet):
         clinica_id = self.request.query_params.get('clinica')
         if clinica_id:
             queryset = queryset.filter(clinica_id=clinica_id)
+        queryset = apply_sede_scope(self.request, queryset)
         return queryset
 
     @action(detail=False, methods=['post'])
@@ -102,11 +145,9 @@ class MedicoViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = Medico.objects.all()
         clinica_id = self.request.query_params.get('clinica')
-        sede_id = self.request.query_params.get('sede')
         if clinica_id:
             queryset = queryset.filter(clinica_id=clinica_id)
-        if sede_id:
-            queryset = queryset.filter(sede_id=sede_id)
+        queryset = apply_sede_scope(self.request, queryset)
         return queryset
 
 
@@ -119,6 +160,7 @@ class PacienteViewSet(viewsets.ModelViewSet):
         clinica_id = self.request.query_params.get('clinica')
         if clinica_id:
             queryset = queryset.filter(clinica_id=clinica_id)
+        queryset = apply_sede_scope(self.request, queryset)
         return queryset
 
 
@@ -130,16 +172,14 @@ class CitaViewSet(viewsets.ModelViewSet):
         queryset = Cita.objects.all()
         clinica_id = self.request.query_params.get('clinica')
         medico_id = self.request.query_params.get('medico')
-        sede_id = self.request.query_params.get('sede')
         estado = self.request.query_params.get('estado')
         if clinica_id:
             queryset = queryset.filter(clinica_id=clinica_id)
         if medico_id:
             queryset = queryset.filter(medico_id=medico_id)
-        if sede_id:
-            queryset = queryset.filter(sede_id=sede_id)
         if estado:
             queryset = queryset.filter(estado=estado)
+        queryset = apply_sede_scope(self.request, queryset)
         return queryset
 
 
@@ -165,7 +205,7 @@ class RegistroKPIViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(medico_id=medico_id)
         if tipo:
             queryset = queryset.filter(tipo=tipo)
-
+        queryset = apply_sede_scope(self.request, queryset)
         desde = timezone.now() - timedelta(hours=int(horas))
         queryset = queryset.filter(fecha_hora__gte=desde)
         return queryset.order_by('fecha_hora')
@@ -190,7 +230,7 @@ class AlertaViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(severidad=severidad)
         if medico_id:
             queryset = queryset.filter(medico_id=medico_id)
-
+        queryset = apply_sede_scope(self.request, queryset)
         dias = self.request.query_params.get('dias')
         if dias:
             desde = timezone.now() - timedelta(days=int(dias))
@@ -253,6 +293,7 @@ class NotificacionViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(estado=estado)
         if clinica_id:
             queryset = queryset.filter(alerta__clinica_id=clinica_id)
+        queryset = apply_sede_scope(self.request, queryset, sede_field='alerta__sede_id')
         return queryset.order_by('-enviada_en')
 
     @action(detail=False, methods=['post'])
@@ -302,6 +343,10 @@ class IntegracionExternaViewSet(viewsets.ModelViewSet):
         if clinica_id:
             queryset = queryset.filter(clinica_id=clinica_id)
         return queryset
+
+    @action(detail=False, methods=['post'], url_path='importar_csv')
+    def importar_csv(self, request):
+        return importar_csv(request)
 
 
 class SyncLogViewSet(viewsets.ModelViewSet):
@@ -364,12 +409,26 @@ def generar_datos(request):
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+def toggle_generador(request):
+    clinica_id = request.data.get('clinica_id')
+    if not clinica_id:
+        return Response({'error': 'clinica_id requerido'}, status=status.HTTP_400_BAD_REQUEST)
+    try:
+        clinica = Clinica.objects.get(id=clinica_id)
+        clinica.generador_activo = not clinica.generador_activo
+        clinica.save(update_fields=['generador_activo'])
+        return Response({'generador_activo': clinica.generador_activo})
+    except Clinica.DoesNotExist:
+        return Response({'error': 'Clínica no encontrada'}, status=status.HTTP_404_NOT_FOUND)
+
+
 def importar_csv(request):
     """
     Importa un archivo CSV para crear RegistroKPI o Cita.
     Params: clinica_id, tipo (kpi|citas), file (multipart)
     Columnas KPI: tipo,valor,fecha_hora (fecha_hora opcional, usa now())
     Columnas Citas: medico_id,estado,ingreso_generado,fecha_hora_agendada (medico_id puede ser vacío)
+    Llamado como @action desde IntegracionExternaViewSet.
     """
     import csv
     import io

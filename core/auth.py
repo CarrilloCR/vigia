@@ -32,6 +32,21 @@ def validate_password_strength(password):
     return errors
 
 
+def _user_dict(usuario_vigia):
+    """Build the user dict returned by login / register / me."""
+    is_superadmin = usuario_vigia.rol == 'superadmin'
+    return {
+        'id': usuario_vigia.id,
+        'nombre': usuario_vigia.nombre,
+        'email': usuario_vigia.email,
+        'rol': usuario_vigia.rol,
+        'clinica_id': None if is_superadmin else usuario_vigia.clinica.id,
+        'clinica_nombre': None if is_superadmin else usuario_vigia.clinica.nombre,
+        'sede_id': None if is_superadmin else (usuario_vigia.sede.id if usuario_vigia.sede else None),
+        'sede_nombre': None if is_superadmin else (usuario_vigia.sede.nombre if usuario_vigia.sede else None),
+    }
+
+
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def register(request):
@@ -41,40 +56,38 @@ def register(request):
     email = data.get('email', '').strip().lower()
     password = data.get('password', '')
     nombre_clinica = data.get('nombre_clinica', '').strip()
+    clinica_id = data.get('clinica_id')       # optional — join existing clinic
+    sede_id = data.get('sede_id')             # optional — join existing sede
 
-    if not all([nombre, email, password, nombre_clinica]):
+    joining = bool(clinica_id)
+
+    if not all([nombre, email, password]):
         return Response(
-            {'error': 'Todos los campos son requeridos.'},
+            {'error': 'Nombre, email y contraseña son requeridos.'},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    if not joining and not nombre_clinica:
+        return Response(
+            {'error': 'El nombre de la clínica es requerido para crear una nueva.'},
             status=status.HTTP_400_BAD_REQUEST
         )
 
     # Validar email
     if not re.match(r'^[^\s@]+@[^\s@]+\.[^\s@]+$', email):
-        return Response(
-            {'error': 'Email inválido.'},
-            status=status.HTTP_400_BAD_REQUEST
-        )
+        return Response({'error': 'Email inválido.'}, status=status.HTTP_400_BAD_REQUEST)
 
     # Validar contraseña
     password_errors = validate_password_strength(password)
     if password_errors:
-        return Response(
-            {'error': ' '.join(password_errors)},
-            status=status.HTTP_400_BAD_REQUEST
-        )
+        return Response({'error': ' '.join(password_errors)}, status=status.HTTP_400_BAD_REQUEST)
 
-    # Verificar si el email ya existe
+    # Verificar unicidad del email
     if User.objects.filter(email=email).exists():
-        return Response(
-            {'error': 'Este email ya está registrado.'},
-            status=status.HTTP_400_BAD_REQUEST
-        )
+        return Response({'error': 'Este email ya está registrado.'}, status=status.HTTP_400_BAD_REQUEST)
 
     if Clinica.objects.filter(email=email).exists():
-        return Response(
-            {'error': 'Este email ya está registrado.'},
-            status=status.HTTP_400_BAD_REQUEST
-        )
+        return Response({'error': 'Este email ya está registrado.'}, status=status.HTTP_400_BAD_REQUEST)
 
     try:
         # Crear usuario Django
@@ -86,37 +99,61 @@ def register(request):
             last_name=' '.join(nombre.split()[1:]) if len(nombre.split()) > 1 else ''
         )
 
-        # Crear clínica
-        clinica = Clinica.objects.create(
-            nombre=nombre_clinica,
-            email=email,
-            plan='basico',
-            activa=True
-        )
+        if joining:
+            # ── Unirse a clínica existente ──────────────────────────────────
+            try:
+                clinica = Clinica.objects.get(id=clinica_id, activa=True)
+            except Clinica.DoesNotExist:
+                user.delete()
+                return Response({'error': 'Clínica no encontrada.'}, status=status.HTTP_404_NOT_FOUND)
 
-        # Crear sede principal
-        sede = Sede.objects.create(
-            clinica=clinica,
-            nombre='Sede Principal',
-            activa=True
-        )
+            sede = None
+            if sede_id:
+                try:
+                    sede = Sede.objects.get(id=sede_id, clinica=clinica, activa=True)
+                except Sede.DoesNotExist:
+                    user.delete()
+                    return Response({'error': 'Sede no encontrada en esa clínica.'}, status=status.HTTP_404_NOT_FOUND)
 
-        # Crear usuario Vigía — inicia como viewer, debe solicitar admin
-        usuario_vigia = Usuario.objects.create(
-            clinica=clinica,
-            sede=sede,
-            nombre=nombre,
-            email=email,
-            password_hash=user.password,
-            rol='viewer'
-        )
+            usuario_vigia = Usuario.objects.create(
+                clinica=clinica,
+                sede=sede,
+                nombre=nombre,
+                email=email,
+                password_hash=user.password,
+                rol='viewer'
+            )
+            mensaje = 'Solicitud enviada. El administrador de la clínica revisará tu acceso.'
 
-        # Crear solicitud de rol admin automática y notificar a carrillo
+        else:
+            # ── Crear nueva clínica ─────────────────────────────────────────
+            clinica = Clinica.objects.create(
+                nombre=nombre_clinica,
+                email=email,
+                plan='basico',
+                activa=True
+            )
+            sede = Sede.objects.create(
+                clinica=clinica,
+                nombre='Sede Principal',
+                activa=True
+            )
+            usuario_vigia = Usuario.objects.create(
+                clinica=clinica,
+                sede=sede,
+                nombre=nombre,
+                email=email,
+                password_hash=user.password,
+                rol='viewer'
+            )
+            mensaje = 'Cuenta creada. Acceso en revisión — recibirás confirmación pronto.'
+
+        # Crear solicitud de rol admin y notificar
         from .models import SolicitudRol
         solicitud = SolicitudRol.objects.create(
             usuario=usuario_vigia,
             rol_solicitado='admin',
-            motivo=f'Registro de nueva clínica: {nombre_clinica}',
+            motivo=f'Registro {"en" if joining else "de nueva clínica:"} {clinica.nombre}',
         )
         from .tasks import enviar_email_solicitud_rol_task
         try:
@@ -130,16 +167,9 @@ def register(request):
         tokens = get_tokens_for_user(user)
 
         return Response({
-            'message': 'Cuenta creada. Acceso en revisión — recibirás confirmación pronto.',
+            'message': mensaje,
             'tokens': tokens,
-            'user': {
-                'id': usuario_vigia.id,
-                'nombre': usuario_vigia.nombre,
-                'email': usuario_vigia.email,
-                'rol': usuario_vigia.rol,
-                'clinica_id': clinica.id,
-                'clinica_nombre': clinica.nombre,
-            }
+            'user': _user_dict(usuario_vigia),
         }, status=status.HTTP_201_CREATED)
 
     except Exception as e:
@@ -164,44 +194,21 @@ def login(request):
     try:
         user = User.objects.get(email=email)
     except User.DoesNotExist:
-        return Response(
-            {'error': 'Credenciales inválidas.'},
-            status=status.HTTP_401_UNAUTHORIZED
-        )
+        return Response({'error': 'Credenciales inválidas.'}, status=status.HTTP_401_UNAUTHORIZED)
 
     if not user.check_password(password):
-        return Response(
-            {'error': 'Credenciales inválidas.'},
-            status=status.HTTP_401_UNAUTHORIZED
-        )
+        return Response({'error': 'Credenciales inválidas.'}, status=status.HTTP_401_UNAUTHORIZED)
 
     if not user.is_active:
-        return Response(
-            {'error': 'Cuenta desactivada.'},
-            status=status.HTTP_401_UNAUTHORIZED
-        )
+        return Response({'error': 'Cuenta desactivada.'}, status=status.HTTP_401_UNAUTHORIZED)
 
     try:
-        usuario_vigia = Usuario.objects.get(email=email)
+        usuario_vigia = Usuario.objects.select_related('clinica', 'sede').get(email=email)
     except Usuario.DoesNotExist:
-        return Response(
-            {'error': 'Usuario no encontrado en el sistema.'},
-            status=status.HTTP_404_NOT_FOUND
-        )
+        return Response({'error': 'Usuario no encontrado en el sistema.'}, status=status.HTTP_404_NOT_FOUND)
 
     tokens = get_tokens_for_user(user)
-
-    return Response({
-        'tokens': tokens,
-        'user': {
-            'id': usuario_vigia.id,
-            'nombre': usuario_vigia.nombre,
-            'email': usuario_vigia.email,
-            'rol': usuario_vigia.rol,
-            'clinica_id': usuario_vigia.clinica.id,
-            'clinica_nombre': usuario_vigia.clinica.nombre,
-        }
-    })
+    return Response({'tokens': tokens, 'user': _user_dict(usuario_vigia)})
 
 
 @api_view(['POST'])
@@ -220,15 +227,8 @@ def logout(request):
 @permission_classes([IsAuthenticated])
 def me(request):
     try:
-        usuario_vigia = Usuario.objects.get(email=request.user.email)
-        return Response({
-            'id': usuario_vigia.id,
-            'nombre': usuario_vigia.nombre,
-            'email': usuario_vigia.email,
-            'rol': usuario_vigia.rol,
-            'clinica_id': usuario_vigia.clinica.id,
-            'clinica_nombre': usuario_vigia.clinica.nombre,
-        })
+        usuario_vigia = Usuario.objects.select_related('clinica', 'sede').get(email=request.user.email)
+        return Response(_user_dict(usuario_vigia))
     except Usuario.DoesNotExist:
         return Response({'error': 'Usuario no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -247,10 +247,7 @@ def cambiar_password(request):
 
     errors = validate_password_strength(password_nuevo)
     if errors:
-        return Response(
-            {'error': ' '.join(errors)},
-            status=status.HTTP_400_BAD_REQUEST
-        )
+        return Response({'error': ' '.join(errors)}, status=status.HTTP_400_BAD_REQUEST)
 
     request.user.set_password(password_nuevo)
     request.user.save()

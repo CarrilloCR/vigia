@@ -8,7 +8,7 @@ from .views import (
     NotificacionViewSet, FeedbackAlertaViewSet,
     ConfiguracionAlertaViewSet, IntegracionExternaViewSet, EmailNotificacionViewSet,
     SyncLogViewSet, PlanFacturacionViewSet, SolicitudRolViewSet,
-    ejecutar_motor, generar_datos, importar_csv
+    ejecutar_motor, generar_datos, toggle_generador, importar_csv, listar_clinicas_publico  # importar_csv usado como @action
 )
 from .auth import register, login, logout, me, cambiar_password
 
@@ -35,7 +35,8 @@ urlpatterns = [
     path('', include(router.urls)),
     path('motor/ejecutar/', ejecutar_motor, name='ejecutar_motor'),
     path('generador/ejecutar/', generar_datos, name='generar_datos'),
-    path('integraciones/importar_csv/', importar_csv, name='importar_csv'),
+    path('generador/toggle/', toggle_generador, name='toggle_generador'),
+    path('clinicas/publico/', listar_clinicas_publico, name='clinicas_publico'),
     # Auth
     path('auth/register/', register, name='register'),
     path('auth/login/', login, name='login'),

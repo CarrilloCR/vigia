@@ -20,18 +20,24 @@ class SedeSerializer(serializers.ModelSerializer):
 
 
 class UsuarioSerializer(serializers.ModelSerializer):
+    sede_nombre = serializers.CharField(source='sede.nombre', read_only=True, default=None)
+
     class Meta:
         model = Usuario
         fields = '__all__'
 
 
 class MedicoSerializer(serializers.ModelSerializer):
+    sede_nombre = serializers.CharField(source='sede.nombre', read_only=True, default=None)
+
     class Meta:
         model = Medico
         fields = '__all__'
 
 
 class PacienteSerializer(serializers.ModelSerializer):
+    sede_nombre = serializers.CharField(source='sede.nombre', read_only=True, default=None)
+
     class Meta:
         model = Paciente
         fields = '__all__'
@@ -40,6 +46,7 @@ class PacienteSerializer(serializers.ModelSerializer):
 class CitaSerializer(serializers.ModelSerializer):
     paciente_nombre = serializers.SerializerMethodField()
     medico_nombre = serializers.SerializerMethodField()
+    sede_nombre = serializers.CharField(source='sede.nombre', read_only=True, default=None)
 
     class Meta:
         model = Cita
@@ -65,6 +72,8 @@ class RegistroKPISerializer(serializers.ModelSerializer):
 
 
 class AlertaSerializer(serializers.ModelSerializer):
+    sede_nombre = serializers.CharField(source='sede.nombre', read_only=True, default=None)
+
     class Meta:
         model = Alerta
         fields = '__all__'
@@ -110,6 +119,7 @@ class EmailNotificacionSerializer(serializers.ModelSerializer):
     class Meta:
         model = EmailNotificacion
         fields = '__all__'
+
 
 class SolicitudRolSerializer(serializers.ModelSerializer):
     usuario_nombre = serializers.CharField(source='usuario.nombre', read_only=True)

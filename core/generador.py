@@ -2,7 +2,7 @@ import random
 import statistics
 from django.utils import timezone
 from datetime import timedelta
-from .models import Clinica, Medico, Paciente, Cita, RegistroKPI
+from .models import Clinica, Medico, Paciente, Cita, RegistroKPI, Sede
 
 
 def generar_cita_aleatoria(clinica):
@@ -13,7 +13,13 @@ def generar_cita_aleatoria(clinica):
         return None
 
     medico = random.choice(list(medicos))
-    paciente = random.choice(list(pacientes))
+
+    # Prefer a patient from the same sede as the medico; fall back to any patient
+    if medico.sede_id:
+        pacientes_sede = pacientes.filter(sede=medico.sede)
+        paciente = random.choice(list(pacientes_sede)) if pacientes_sede.exists() else random.choice(list(pacientes))
+    else:
+        paciente = random.choice(list(pacientes))
 
     estado = random.choices(
         ['completada', 'cancelada', 'no_show', 'reagendada'],
@@ -26,6 +32,7 @@ def generar_cita_aleatoria(clinica):
 
     return Cita.objects.create(
         clinica=clinica,
+        sede=medico.sede,       # Inherit sede from the assigned medico
         medico=medico,
         paciente=paciente,
         fecha_hora_agendada=fecha,
@@ -35,7 +42,7 @@ def generar_cita_aleatoria(clinica):
     )
 
 
-def generar_kpis_variados(clinica_id):
+def generar_kpis_variados(clinica_id, sede_id=None):
     base = {
         'tasa_cancelacion':  (5, 25),
         'tasa_noshow':       (2, 15),
@@ -48,38 +55,35 @@ def generar_kpis_variados(clinica_id):
     }
 
     for tipo, (minv, maxv) in base.items():
-        recientes = list(RegistroKPI.objects.filter(
-            clinica_id=clinica_id,
-            tipo=tipo,
-        ).order_by('-fecha_hora').values_list('valor', flat=True)[:20])
+        # Use sede-scoped history when a sede is provided
+        qs = RegistroKPI.objects.filter(clinica_id=clinica_id, tipo=tipo)
+        if sede_id:
+            qs = qs.filter(sede_id=sede_id)
+
+        recientes = list(qs.order_by('-fecha_hora').values_list('valor', flat=True)[:20])
 
         if len(recientes) >= 5:
             promedio = statistics.mean(recientes)
             rand = random.random()
 
             if rand < 0.50:
-                # Normal — sin anomalía
                 valor = round(promedio * random.uniform(0.85, 1.15), 2)
             elif rand < 0.65:
-                # Baja — 20-40% desviación
                 if random.random() < 0.5:
                     valor = round(promedio * random.uniform(0.60, 0.80), 2)
                 else:
                     valor = round(promedio * random.uniform(1.20, 1.40), 2)
             elif rand < 0.78:
-                # Media — 40-60% desviación
                 if random.random() < 0.5:
                     valor = round(promedio * random.uniform(0.40, 0.60), 2)
                 else:
                     valor = round(promedio * random.uniform(1.40, 1.60), 2)
             elif rand < 0.89:
-                # Alta — 60-80% desviación
                 if random.random() < 0.5:
                     valor = round(promedio * random.uniform(0.20, 0.40), 2)
                 else:
                     valor = round(promedio * random.uniform(1.60, 1.80), 2)
             else:
-                # Crítica — >80% desviación
                 if random.random() < 0.5:
                     valor = round(promedio * random.uniform(0.05, 0.15), 2)
                 else:
@@ -91,6 +95,7 @@ def generar_kpis_variados(clinica_id):
 
         RegistroKPI.objects.create(
             clinica_id=clinica_id,
+            sede_id=sede_id,
             tipo=tipo,
             valor=valor,
             periodo='dia'
@@ -103,14 +108,21 @@ def generar_datos_clinica(clinica_id):
     except Clinica.DoesNotExist:
         return
 
+    # Generate citas (sede assigned via medico.sede inside the function)
     for _ in range(random.randint(3, 8)):
         generar_cita_aleatoria(clinica)
 
-    generar_kpis_variados(clinica_id)
+    # Generate KPIs per sede, or globally if no sedes exist
+    sedes = Sede.objects.filter(clinica=clinica, activa=True)
+    if sedes.exists():
+        for sede in sedes:
+            generar_kpis_variados(clinica_id, sede_id=sede.id)
+    else:
+        generar_kpis_variados(clinica_id)
 
 
 def generar_datos_todas_clinicas():
-    clinicas = Clinica.objects.filter(activa=True)
+    clinicas = Clinica.objects.filter(activa=True, generador_activo=True)
     for clinica in clinicas:
         generar_datos_clinica(clinica.id)
     return f"Datos generados para {clinicas.count()} clínicas"
