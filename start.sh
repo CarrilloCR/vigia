@@ -1,6 +1,5 @@
 #!/bin/bash
 cd ~/vigia
-source env/bin/activate
 
 echo "Iniciando Vigía..."
 
