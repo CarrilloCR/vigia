@@ -52,8 +52,9 @@ def enviar_notificaciones_agrupadas_task(clinica_id, alerta_ids):
             resultados.append(f"email → {len(emails_destino)} destinatarios")
 
         # ── WhatsApp ─────────────────────────────────────────────────────────
-        numero_wa = (clinica.whatsapp_numero or '').strip()
-        if numero_wa:
+        # Soporta múltiples números separados por coma: +506888,+506999
+        numeros_wa = [n.strip() for n in (clinica.whatsapp_numero or '').split(',') if n.strip()]
+        for numero_wa in numeros_wa:
             notif_wa = Notificacion.objects.create(
                 alerta=alertas.first(),
                 usuario=usuarios.first() if usuarios.exists() else None,
@@ -62,7 +63,8 @@ def enviar_notificaciones_agrupadas_task(clinica_id, alerta_ids):
                 estado='pendiente'
             )
             enviar_whatsapp_task.delay(notif_wa.id, list(alerta_ids), numero_wa)
-            resultados.append(f"whatsapp → {numero_wa}")
+        if numeros_wa:
+            resultados.append(f"whatsapp → {len(numeros_wa)} número(s)")
 
         return "Notificaciones enviadas: " + ", ".join(resultados) if resultados else "Sin destinatarios configurados"
 
