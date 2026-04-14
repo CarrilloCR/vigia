@@ -8,7 +8,8 @@ from .views import (
     NotificacionViewSet, FeedbackAlertaViewSet,
     ConfiguracionAlertaViewSet, IntegracionExternaViewSet, EmailNotificacionViewSet,
     SyncLogViewSet, PlanFacturacionViewSet, SolicitudRolViewSet,
-    ejecutar_motor, generar_datos, toggle_generador, importar_csv, listar_clinicas_publico  # importar_csv usado como @action
+    ejecutar_motor, generar_datos, toggle_generador, importar_csv, listar_clinicas_publico,
+    crear_sesion_checkout, stripe_webhook,
 )
 from .auth import register, login, logout, me, cambiar_password
 
@@ -38,6 +39,9 @@ urlpatterns = [
     path('motor/ejecutar/', ejecutar_motor, name='ejecutar_motor'),
     path('generador/ejecutar/', generar_datos, name='generar_datos'),
     path('generador/toggle/', toggle_generador, name='toggle_generador'),
+    # Stripe — must be before router to prevent pk matching
+    path('facturacion/crear-sesion/', crear_sesion_checkout, name='crear_sesion_checkout'),
+    path('facturacion/webhook/', stripe_webhook, name='stripe_webhook'),
     path('', include(router.urls)),
     # Auth
     path('auth/register/', register, name='register'),

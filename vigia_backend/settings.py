@@ -104,6 +104,14 @@ REST_FRAMEWORK = {
 # Allow large JSON bodies (base64-encoded profile images)
 DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10 MB
 
+# Stripe
+STRIPE_SECRET_KEY = os.getenv('STRIPE_SECRET_KEY', '')
+STRIPE_WEBHOOK_SECRET = os.getenv('STRIPE_WEBHOOK_SECRET', '')
+STRIPE_PRICE_BASICO = os.getenv('STRIPE_PRICE_BASICO', '')
+STRIPE_PRICE_PROFESIONAL = os.getenv('STRIPE_PRICE_PROFESIONAL', '')
+STRIPE_PRICE_ENTERPRISE = os.getenv('STRIPE_PRICE_ENTERPRISE', '')
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
+
 # Celery
 CELERY_BROKER_URL = 'redis://localhost:6379/0'
 CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'

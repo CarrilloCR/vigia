@@ -293,6 +293,11 @@ class PlanFacturacion(models.Model):
     fecha_inicio = models.DateField()
     fecha_renovacion = models.DateField()
     creado_en = models.DateTimeField(auto_now_add=True)
+    # Stripe integration
+    stripe_customer_id = models.CharField(max_length=120, blank=True, default='')
+    stripe_subscription_id = models.CharField(max_length=120, blank=True, default='')
+    ultimos_cuatro = models.CharField(max_length=4, blank=True, default='')
+    marca_tarjeta = models.CharField(max_length=20, blank=True, default='')
 
     def __str__(self):
         return f"{self.clinica} - {self.plan} - {self.estado}"

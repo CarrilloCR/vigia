@@ -1,9 +1,9 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import api_view, permission_classes, action
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from django.utils import timezone
-from datetime import timedelta
+from datetime import timedelta, date
 from .models import (
     Clinica, Sede, Usuario, Medico, Paciente, Cita, Encuesta,
     RegistroKPI, Alerta, Notificacion, FeedbackAlerta,
@@ -794,3 +794,117 @@ class SolicitudRolViewSet(viewsets.ModelViewSet):
                 pass
         solicitud.save()
         return Response({'status': 'rechazada'})
+
+
+# ─── Stripe: crear sesión de checkout ────────────────────────────────────────
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def crear_sesion_checkout(request):
+    import stripe
+    from django.conf import settings as django_settings
+
+    plan = request.data.get('plan')
+    PRECIO_MAP = {
+        'basico':       (django_settings.STRIPE_PRICE_BASICO,       49),
+        'profesional':  (django_settings.STRIPE_PRICE_PROFESIONAL,  149),
+        'enterprise':   (django_settings.STRIPE_PRICE_ENTERPRISE,   399),
+    }
+    if plan not in PRECIO_MAP:
+        return Response({'error': 'Plan inválido'}, status=status.HTTP_400_BAD_REQUEST)
+
+    stripe.api_key = django_settings.STRIPE_SECRET_KEY
+    if not stripe.api_key:
+        return Response({'error': 'Stripe no configurado en este entorno'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    price_id, monto = PRECIO_MAP[plan]
+    usuario = request.user
+    clinica = getattr(usuario, 'clinica', None)
+    if not clinica:
+        return Response({'error': 'Usuario sin clínica asignada'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Get or create PlanFacturacion record
+    pf, _ = PlanFacturacion.objects.get_or_create(
+        clinica=clinica,
+        defaults={'plan': plan, 'monto': monto, 'fecha_inicio': date.today(), 'fecha_renovacion': date.today()}
+    )
+
+    # Get or create Stripe Customer
+    if not pf.stripe_customer_id:
+        customer = stripe.Customer.create(
+            email=usuario.email,
+            name=clinica.nombre,
+            metadata={'clinica_id': clinica.id},
+        )
+        pf.stripe_customer_id = customer.id
+        pf.save(update_fields=['stripe_customer_id'])
+
+    session = stripe.checkout.Session.create(
+        customer=pf.stripe_customer_id,
+        payment_method_types=['card'],
+        mode='subscription',
+        line_items=[{'price': price_id, 'quantity': 1}],
+        success_url=f"{django_settings.FRONTEND_URL}/dashboard/configuracion?seccion=facturacion&pago=ok",
+        cancel_url=f"{django_settings.FRONTEND_URL}/dashboard/configuracion?seccion=facturacion",
+        metadata={'clinica_id': clinica.id, 'plan': plan},
+        subscription_data={'metadata': {'clinica_id': clinica.id, 'plan': plan}},
+    )
+    return Response({'checkout_url': session.url})
+
+
+# ─── Stripe: webhook ──────────────────────────────────────────────────────────
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def stripe_webhook(request):
+    import stripe
+    from django.conf import settings as django_settings
+
+    stripe.api_key = django_settings.STRIPE_SECRET_KEY
+    payload = request.body
+    sig = request.META.get('HTTP_STRIPE_SIGNATURE', '')
+
+    try:
+        event = stripe.Webhook.construct_event(payload, sig, django_settings.STRIPE_WEBHOOK_SECRET)
+    except stripe.error.SignatureVerificationError:
+        return Response({'error': 'Firma inválida'}, status=status.HTTP_400_BAD_REQUEST)
+    except Exception as e:
+        return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    etype = event['type']
+    obj = event['data']['object']
+
+    if etype == 'checkout.session.completed':
+        meta = obj.get('metadata', {})
+        clinica_id = meta.get('clinica_id')
+        plan = meta.get('plan')
+        sub_id = obj.get('subscription', '')
+        if clinica_id and plan:
+            MONTOS = {'basico': 49, 'profesional': 149, 'enterprise': 399}
+            PlanFacturacion.objects.filter(clinica_id=clinica_id).update(
+                plan=plan, estado='activo', monto=MONTOS.get(plan, 0),
+                stripe_subscription_id=sub_id,
+                fecha_inicio=date.today(),
+                fecha_renovacion=date.today() + timedelta(days=30),
+            )
+            Clinica.objects.filter(id=clinica_id).update(plan=plan)
+
+    elif etype == 'invoice.payment_succeeded':
+        sub_id = obj.get('subscription', '')
+        if sub_id:
+            PlanFacturacion.objects.filter(stripe_subscription_id=sub_id).update(
+                estado='activo',
+                fecha_renovacion=date.today() + timedelta(days=30),
+            )
+
+    elif etype == 'invoice.payment_failed':
+        sub_id = obj.get('subscription', '')
+        if sub_id:
+            PlanFacturacion.objects.filter(stripe_subscription_id=sub_id).update(estado='vencido')
+
+    elif etype == 'customer.subscription.deleted':
+        sub_id = obj.get('id', '')
+        if sub_id:
+            PlanFacturacion.objects.filter(stripe_subscription_id=sub_id).update(estado='cancelado')
+
+    return Response({'ok': True})
