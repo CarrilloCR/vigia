@@ -818,8 +818,11 @@ def crear_sesion_checkout(request):
         return Response({'error': 'Stripe no configurado en este entorno'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
     price_id, monto = PRECIO_MAP[plan]
-    usuario = request.user
-    clinica = getattr(usuario, 'clinica', None)
+    try:
+        usuario = Usuario.objects.get(email=request.user.email)
+        clinica = usuario.clinica
+    except Usuario.DoesNotExist:
+        return Response({'error': 'Usuario sin clínica asignada'}, status=status.HTTP_400_BAD_REQUEST)
     if not clinica:
         return Response({'error': 'Usuario sin clínica asignada'}, status=status.HTTP_400_BAD_REQUEST)
 
