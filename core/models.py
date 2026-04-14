@@ -52,6 +52,7 @@ class Usuario(models.Model):
     email = models.EmailField(unique=True)
     password_hash = models.CharField(max_length=255)
     rol = models.CharField(max_length=20, choices=ROL_CHOICES, default='admin')
+    avatar = models.TextField(blank=True, default='')
     ultimo_acceso = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
@@ -85,6 +86,7 @@ class Paciente(models.Model):
     telefono = models.CharField(max_length=20, blank=True)
     email = models.EmailField(blank=True)
     primera_visita = models.DateField(auto_now_add=True)
+    activo = models.BooleanField(default=True)
 
     def __str__(self):
         return f"{self.nombre} {self.apellido}"

@@ -3,7 +3,7 @@ import anthropic
 import os
 from django.utils import timezone
 from datetime import timedelta
-from .models import Cita, RegistroKPI, Alerta, Clinica, Encuesta
+from .models import Cita, RegistroKPI, Alerta, Clinica, Encuesta, Sede
 from .deteccion import detectar_anomalia_ensemble
 
 def calcular_tasa_cancelacion(clinica_id):
@@ -202,59 +202,71 @@ def correr_motor(clinica_id, enviar_notif=False):
 
     alertas_creadas = []
 
-    for tipo_kpi in kpis:
-        ultimo = RegistroKPI.objects.filter(
-            clinica_id=clinica_id,
-            tipo=tipo_kpi
-        ).order_by('-fecha_hora').first()
+    # Collect all sede_ids (including None = clinic-wide) that have KPI data
+    sede_ids_con_datos = list(
+        RegistroKPI.objects.filter(clinica_id=clinica_id)
+        .values_list('sede_id', flat=True)
+        .distinct()
+    )
+    if not sede_ids_con_datos:
+        sede_ids_con_datos = [None]
 
-        if not ultimo:
-            continue
-
-        valor_actual = ultimo.valor
-        sede = ultimo.sede  # propagate sede from the KPI record to the alert
+    for sede_id in sede_ids_con_datos:
+        sede = Sede.objects.get(id=sede_id) if sede_id else None
         sede_nombre = sede.nombre if sede else None
 
-        # Historical values scoped to same sede (for statistical + PyOD)
-        historico_qs_base = RegistroKPI.objects.filter(
-            clinica_id=clinica_id,
-            tipo=tipo_kpi,
-            sede=sede,
-        )
-        historico = list(historico_qs_base.order_by('-fecha_hora')[1:60].values_list('valor', flat=True))
-
-        # Historical values with dates (for Prophet) — exclude the latest record
-        historico_fechas_qs = historico_qs_base.exclude(pk=ultimo.pk).order_by('fecha_hora').values_list('fecha_hora', 'valor')
-        historico_con_fechas = list(historico_fechas_qs) if historico_fechas_qs.count() >= 14 else None
-
-        es_anomalia, valor_esperado, desviacion, metodo, detalle = detectar_anomalia_ensemble(
-            valor_actual, historico, historico_con_fechas
-        )
-
-        if es_anomalia:
-            severidad = determinar_severidad(desviacion)
-            mensaje = generar_mensaje(tipo_kpi, valor_actual, valor_esperado, desviacion, clinica.nombre, sede_nombre)
-
-            if severidad in ['alta', 'critica'] and clinica.claude_activo:
-                recomendacion = generar_recomendacion_ia(tipo_kpi, valor_actual, valor_esperado, desviacion, clinica.nombre, severidad)
-            else:
-                recomendacion = 'Monitorear la situación y revisar si el patrón continúa en las próximas horas.'
-
-            alerta = Alerta.objects.create(
+        for tipo_kpi in kpis:
+            ultimo = RegistroKPI.objects.filter(
                 clinica_id=clinica_id,
-                sede=sede,
-                tipo_kpi=tipo_kpi,
-                valor_detectado=valor_actual,
-                valor_esperado=valor_esperado,
-                desviacion=desviacion,
-                severidad=severidad,
-                mensaje=mensaje,
-                recomendacion=recomendacion,
-                metodo_deteccion=metodo,
-                detalle_deteccion=detalle,
-                estado='activa'
+                tipo=tipo_kpi,
+                sede_id=sede_id,
+            ).order_by('-fecha_hora').first()
+
+            if not ultimo:
+                continue
+
+            valor_actual = ultimo.valor
+
+            # Historical values scoped to same sede
+            historico_qs_base = RegistroKPI.objects.filter(
+                clinica_id=clinica_id,
+                tipo=tipo_kpi,
+                sede_id=sede_id,
             )
-            alertas_creadas.append(alerta.id)
+            historico = list(historico_qs_base.order_by('-fecha_hora')[1:60].values_list('valor', flat=True))
+
+            # Historical values with dates (for Prophet) — exclude the latest record
+            historico_fechas_qs = historico_qs_base.exclude(pk=ultimo.pk).order_by('fecha_hora').values_list('fecha_hora', 'valor')
+            historico_con_fechas = list(historico_fechas_qs) if historico_fechas_qs.count() >= 14 else None
+
+            es_anomalia, valor_esperado, desviacion, metodo, detalle = detectar_anomalia_ensemble(
+                valor_actual, historico, historico_con_fechas
+            )
+
+            if es_anomalia:
+                severidad = determinar_severidad(desviacion)
+                mensaje = generar_mensaje(tipo_kpi, valor_actual, valor_esperado, desviacion, clinica.nombre, sede_nombre)
+
+                if severidad in ['alta', 'critica'] and clinica.claude_activo:
+                    recomendacion = generar_recomendacion_ia(tipo_kpi, valor_actual, valor_esperado, desviacion, clinica.nombre, severidad)
+                else:
+                    recomendacion = 'Monitorear la situación y revisar si el patrón continúa en las próximas horas.'
+
+                alerta = Alerta.objects.create(
+                    clinica_id=clinica_id,
+                    sede=sede,
+                    tipo_kpi=tipo_kpi,
+                    valor_detectado=valor_actual,
+                    valor_esperado=valor_esperado,
+                    desviacion=desviacion,
+                    severidad=severidad,
+                    mensaje=mensaje,
+                    recomendacion=recomendacion,
+                    metodo_deteccion=metodo,
+                    detalle_deteccion=detalle,
+                    estado='activa'
+                )
+                alertas_creadas.append(alerta.id)
 
     # Registrar timestamp del último motor run
     from django.utils import timezone as tz

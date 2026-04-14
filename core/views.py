@@ -36,15 +36,49 @@ def _get_usuario(request):
 
 def apply_sede_scope(request, queryset, sede_field='sede_id'):
     """
-    If the caller is a gerente with an assigned sede, force-filter to that sede.
+    Gerentes are locked to their sede.
+    Medicos: locked to their sede (from usuario or from their Medico profile).
     Otherwise honour the ?sede= query param if present.
     """
     usuario = _get_usuario(request)
     if usuario and usuario.rol == 'gerente' and usuario.sede_id:
         return queryset.filter(**{sede_field: usuario.sede_id})
+    if usuario and usuario.rol == 'medico':
+        # Prefer sede from usuario profile; fall back to Medico profile sede
+        sede_id = usuario.sede_id
+        if not sede_id:
+            medico = usuario.medico_perfil.filter(activo=True).first()
+            if medico and medico.sede_id:
+                sede_id = medico.sede_id
+        if sede_id:
+            return queryset.filter(**{sede_field: sede_id})
+        # Medico with no sede: no sede restriction (see all clinic data)
+        return queryset
     sede_id = request.query_params.get('sede')
     if sede_id:
         return queryset.filter(**{sede_field: sede_id})
+    return queryset
+
+
+def _get_medico_del_usuario(usuario):
+    """Return the Medico profile for a usuario with rol='medico', or None."""
+    if usuario and usuario.rol == 'medico':
+        return usuario.medico_perfil.filter(activo=True).first()
+    return None
+
+
+def apply_medico_scope(request, queryset, medico_field='medico_id'):
+    """
+    When the caller is a medico, force-filter to their own Medico profile.
+    Also honours the ?medico= query param for admin/superadmin users.
+    """
+    usuario = _get_usuario(request)
+    medico = _get_medico_del_usuario(usuario)
+    if medico:
+        return queryset.filter(**{medico_field: medico.id})
+    medico_id = request.query_params.get('medico')
+    if medico_id:
+        return queryset.filter(**{medico_field: medico_id})
     return queryset
 
 
@@ -158,9 +192,17 @@ class PacienteViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = Paciente.objects.all()
         clinica_id = self.request.query_params.get('clinica')
+        mostrar_inactivos = self.request.query_params.get('inactivos', 'false').lower() == 'true'
         if clinica_id:
             queryset = queryset.filter(clinica_id=clinica_id)
+        if not mostrar_inactivos:
+            queryset = queryset.filter(activo=True)
         queryset = apply_sede_scope(self.request, queryset)
+        # For medicos: only show patients they have citas with
+        usuario = _get_usuario(self.request)
+        medico = _get_medico_del_usuario(usuario)
+        if medico:
+            queryset = queryset.filter(citas__medico=medico).distinct()
         return queryset
 
 
@@ -171,15 +213,13 @@ class CitaViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = Cita.objects.all()
         clinica_id = self.request.query_params.get('clinica')
-        medico_id = self.request.query_params.get('medico')
         estado = self.request.query_params.get('estado')
         if clinica_id:
             queryset = queryset.filter(clinica_id=clinica_id)
-        if medico_id:
-            queryset = queryset.filter(medico_id=medico_id)
         if estado:
             queryset = queryset.filter(estado=estado)
         queryset = apply_sede_scope(self.request, queryset)
+        queryset = apply_medico_scope(self.request, queryset)
         return queryset
 
 
@@ -195,20 +235,129 @@ class RegistroKPIViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = RegistroKPI.objects.all()
         clinica_id = self.request.query_params.get('clinica')
-        medico_id = self.request.query_params.get('medico')
         tipo = self.request.query_params.get('tipo')
         horas = self.request.query_params.get('horas', '24')
 
         if clinica_id:
             queryset = queryset.filter(clinica_id=clinica_id)
-        if medico_id:
-            queryset = queryset.filter(medico_id=medico_id)
         if tipo:
             queryset = queryset.filter(tipo=tipo)
         queryset = apply_sede_scope(self.request, queryset)
+        # KPIs are sede/clinic-level records — medico field is always null in generated data.
+        # Honour explicit ?medico= param only.
+        explicit_medico = self.request.query_params.get('medico')
+        if explicit_medico:
+            queryset = queryset.filter(medico_id=explicit_medico)
         desde = timezone.now() - timedelta(hours=int(horas))
         queryset = queryset.filter(fecha_hora__gte=desde)
         return queryset.order_by('fecha_hora')
+
+    @action(detail=False, methods=['get'], url_path='exportar')
+    def exportar(self, request):
+        """
+        Devuelve todos los registros KPI del período con scores de detección
+        (estadístico, Prophet, PyOD) calculados en el momento.
+        Params: clinica, sede (opcional), horas (default 720 = 30d)
+        """
+        from .deteccion import detectar_estadistico, detectar_prophet, detectar_pyod
+
+        clinica_id = request.query_params.get('clinica')
+        horas = int(request.query_params.get('horas', 720))
+        sede_id = request.query_params.get('sede') or None
+
+        if not clinica_id:
+            return Response({'error': 'clinica requerida'}, status=status.HTTP_400_BAD_REQUEST)
+
+        desde = timezone.now() - timedelta(hours=horas)
+        qs = RegistroKPI.objects.filter(clinica_id=clinica_id, fecha_hora__gte=desde)
+        if sede_id:
+            qs = qs.filter(sede_id=sede_id)
+        qs = qs.order_by('tipo', 'sede_id', 'fecha_hora')
+
+        # Group by (tipo, sede_id) to compute rolling detection
+        from itertools import groupby
+        rows = list(qs.select_related('sede'))
+        resultado = []
+
+        def key_fn(r):
+            return (r.tipo, r.sede_id)
+
+        for (tipo, s_id), grupo in groupby(rows, key=key_fn):
+            grupo = list(grupo)
+            sede_nombre = grupo[0].sede.nombre if grupo[0].sede else 'General'
+
+            # Collect historical context BEFORE the period for better baselines
+            hist_pre = list(
+                RegistroKPI.objects.filter(
+                    clinica_id=clinica_id, tipo=tipo, sede_id=s_id,
+                    fecha_hora__lt=desde
+                ).order_by('-fecha_hora').values_list('valor', flat=True)[:60]
+            )
+
+            # For Prophet: historical with dates before the period
+            hist_fechas_pre = list(
+                RegistroKPI.objects.filter(
+                    clinica_id=clinica_id, tipo=tipo, sede_id=s_id,
+                    fecha_hora__lt=desde
+                ).order_by('fecha_hora').values_list('fecha_hora', 'valor')
+            )
+
+            rolling_valores = list(hist_pre)  # oldest first in rolling window
+
+            for rec in grupo:
+                valor = rec.valor
+                historico = list(reversed(rolling_valores[-60:]))  # latest first
+
+                # Statistical
+                stat_anom, stat_esp, stat_dev = detectar_estadistico(valor, historico)
+
+                # Prophet (needs ≥14 points)
+                hist_fechas = hist_fechas_pre + [(r.fecha_hora, r.valor) for r in grupo if r.fecha_hora < rec.fecha_hora]
+                prophet_result = None
+                if len(hist_fechas) >= 14:
+                    p_anom, p_esp, p_dev, p_extra = detectar_prophet(valor, hist_fechas)
+                    if p_anom is not None:
+                        prophet_result = {
+                            'es_anomalia': p_anom,
+                            'valor_esperado': p_esp,
+                            'desviacion': p_dev,
+                            **(p_extra or {}),
+                        }
+
+                # PyOD (needs ≥10 points)
+                pyod_result = None
+                if len(historico) >= 10:
+                    py_anom, py_esp, py_dev, py_extra = detectar_pyod(valor, historico)
+                    if py_anom is not None:
+                        pyod_result = {
+                            'es_anomalia': py_anom,
+                            'valor_esperado': py_esp,
+                            'desviacion': py_dev,
+                            **(py_extra or {}),
+                        }
+
+                resultado.append({
+                    'id': rec.id,
+                    'fecha_hora': rec.fecha_hora.isoformat(),
+                    'tipo_kpi': tipo,
+                    'sede_id': s_id,
+                    'sede_nombre': sede_nombre,
+                    'valor': valor,
+                    'periodo': rec.periodo,
+                    'deteccion': {
+                        'estadistico': {
+                            'es_anomalia': stat_anom,
+                            'valor_esperado': stat_esp,
+                            'desviacion_pct': stat_dev,
+                        },
+                        'prophet': prophet_result,
+                        'pyod': pyod_result,
+                    },
+                })
+
+                rolling_valores.append(valor)
+
+        return Response(resultado)
 
 
 class AlertaViewSet(viewsets.ModelViewSet):
@@ -220,7 +369,6 @@ class AlertaViewSet(viewsets.ModelViewSet):
         clinica_id = self.request.query_params.get('clinica')
         estado = self.request.query_params.get('estado')
         severidad = self.request.query_params.get('severidad')
-        medico_id = self.request.query_params.get('medico')
 
         if clinica_id:
             queryset = queryset.filter(clinica_id=clinica_id)
@@ -228,9 +376,12 @@ class AlertaViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(estado=estado)
         if severidad:
             queryset = queryset.filter(severidad=severidad)
-        if medico_id:
-            queryset = queryset.filter(medico_id=medico_id)
         queryset = apply_sede_scope(self.request, queryset)
+        # Alertas are clinic/sede-level — NOT filtered by medico_id (always null).
+        # Honour explicit ?medico= param for admins viewing a specific doctor.
+        explicit_medico = self.request.query_params.get('medico')
+        if explicit_medico:
+            queryset = queryset.filter(medico_id=explicit_medico)
         dias = self.request.query_params.get('dias')
         if dias:
             desde = timezone.now() - timedelta(days=int(dias))
@@ -425,7 +576,7 @@ def toggle_generador(request):
 def importar_csv(request):
     """
     Importa un archivo CSV para crear RegistroKPI o Cita.
-    Params: clinica_id, tipo (kpi|citas), file (multipart)
+    Params: clinica_id, sede_id (opcional), tipo (kpi|citas), file (multipart)
     Columnas KPI: tipo,valor,fecha_hora (fecha_hora opcional, usa now())
     Columnas Citas: medico_id,estado,ingreso_generado,fecha_hora_agendada (medico_id puede ser vacío)
     Llamado como @action desde IntegracionExternaViewSet.
@@ -435,6 +586,7 @@ def importar_csv(request):
     from django.utils.dateparse import parse_datetime
 
     clinica_id = request.data.get('clinica_id')
+    sede_id = request.data.get('sede_id') or None
     tipo = request.data.get('tipo', 'kpi')
     archivo = request.FILES.get('file')
 
@@ -445,6 +597,13 @@ def importar_csv(request):
         clinica = Clinica.objects.get(id=clinica_id)
     except Clinica.DoesNotExist:
         return Response({'error': 'Clínica no encontrada'}, status=status.HTTP_404_NOT_FOUND)
+
+    sede = None
+    if sede_id:
+        try:
+            sede = Sede.objects.get(id=sede_id, clinica=clinica)
+        except Sede.DoesNotExist:
+            return Response({'error': 'Sede no encontrada en esa clínica'}, status=status.HTTP_404_NOT_FOUND)
 
     # Crear o reutilizar la integración CSV de esta clínica
     integracion, _ = IntegracionExterna.objects.get_or_create(
@@ -482,6 +641,7 @@ def importar_csv(request):
 
                     RegistroKPI.objects.create(
                         clinica=clinica,
+                        sede=sede,
                         tipo=tipo_kpi,
                         valor=valor,
                         fecha_hora=fecha or timezone.now(),
@@ -505,8 +665,11 @@ def importar_csv(request):
 
                     fecha = parse_datetime(fecha_str) if fecha_str else timezone.now()
 
-                    # Necesitamos un paciente mínimo — usamos el primero de la clínica o creamos uno genérico
-                    paciente = Paciente.objects.filter(clinica=clinica).first()
+                    # Necesitamos un paciente mínimo — preferir de la sede si se especificó
+                    qs_pac = Paciente.objects.filter(clinica=clinica)
+                    if sede:
+                        qs_pac = qs_pac.filter(sede=sede)
+                    paciente = qs_pac.first() or Paciente.objects.filter(clinica=clinica).first()
                     if not paciente:
                         errores.append(f"Fila {i}: no hay pacientes en la clínica para asignar")
                         continue
@@ -520,13 +683,17 @@ def importar_csv(request):
                             continue
 
                     if not medico:
-                        medico = Medico.objects.filter(clinica=clinica, activo=True).first()
+                        qs_med = Medico.objects.filter(clinica=clinica, activo=True)
+                        if sede:
+                            qs_med = qs_med.filter(sede=sede)
+                        medico = qs_med.first() or Medico.objects.filter(clinica=clinica, activo=True).first()
                         if not medico:
                             errores.append(f"Fila {i}: no hay médicos activos en la clínica")
                             continue
 
                     Cita.objects.create(
                         clinica=clinica,
+                        sede=sede or medico.sede,
                         medico=medico,
                         paciente=paciente,
                         fecha_hora_agendada=fecha or timezone.now(),

@@ -101,6 +101,9 @@ REST_FRAMEWORK = {
     ],
 }
 
+# Allow large JSON bodies (base64-encoded profile images)
+DATA_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10 MB
+
 # Celery
 CELERY_BROKER_URL = 'redis://localhost:6379/0'
 CELERY_RESULT_BACKEND = 'redis://localhost:6379/0'

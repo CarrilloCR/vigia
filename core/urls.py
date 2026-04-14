@@ -32,11 +32,13 @@ router.register(r'emails-notificacion', EmailNotificacionViewSet)
 router.register(r'solicitudes-rol', SolicitudRolViewSet)
 
 urlpatterns = [
-    path('', include(router.urls)),
+    # Public endpoints MUST come before router.urls — the router would otherwise
+    # match /clinicas/publico/ as /clinicas/{pk}/ (authenticated detail endpoint).
+    path('clinicas/publico/', listar_clinicas_publico, name='clinicas_publico'),
     path('motor/ejecutar/', ejecutar_motor, name='ejecutar_motor'),
     path('generador/ejecutar/', generar_datos, name='generar_datos'),
     path('generador/toggle/', toggle_generador, name='toggle_generador'),
-    path('clinicas/publico/', listar_clinicas_publico, name='clinicas_publico'),
+    path('', include(router.urls)),
     # Auth
     path('auth/register/', register, name='register'),
     path('auth/login/', login, name='login'),

@@ -35,6 +35,7 @@ def validate_password_strength(password):
 def _user_dict(usuario_vigia):
     """Build the user dict returned by login / register / me."""
     is_superadmin = usuario_vigia.rol == 'superadmin'
+    medico_perfil = usuario_vigia.medico_perfil.filter(activo=True).first() if usuario_vigia.rol == 'medico' else None
     return {
         'id': usuario_vigia.id,
         'nombre': usuario_vigia.nombre,
@@ -44,6 +45,8 @@ def _user_dict(usuario_vigia):
         'clinica_nombre': None if is_superadmin else usuario_vigia.clinica.nombre,
         'sede_id': None if is_superadmin else (usuario_vigia.sede.id if usuario_vigia.sede else None),
         'sede_nombre': None if is_superadmin else (usuario_vigia.sede.nombre if usuario_vigia.sede else None),
+        'avatar': usuario_vigia.avatar or '',
+        'medico_id': medico_perfil.id if medico_perfil else None,
     }
 
 
